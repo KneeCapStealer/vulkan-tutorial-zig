@@ -14,13 +14,13 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "vulkan",
+        .name = "vulkanTutorial",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
 
-    const vulkan = b.dependency("vulkan_zig", .{
-        .registry = b.path("path/to/vk.xml"),
+    const vulkan = b.dependency("vulkan", .{
+        .registry = b.path("vulkan/vk.xml"),
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
 
