@@ -24,6 +24,9 @@ pub fn build(b: *std.Build) void {
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
 
+    const glfw = b.dependency("zglfw", .{}).module("glfw");
+    exe.root_module.addImport("glfw", glfw);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 

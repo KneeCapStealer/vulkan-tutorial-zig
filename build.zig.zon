@@ -40,6 +40,10 @@
             .url = "git+https://github.com/Snektron/vulkan-zig.git#42e7a8409b8150e1cbd57a8ff8cec219114bac74",
             .hash = "vulkan-0.0.0-r7Ytx2dUAwDhoUvuIqliqPUbyDZZi0bl_CQIwspUpHs_",
         },
+        .zglfw = .{
+            .url = "git+https://github.com/IridescenceTech/zglfw.git#5d25d66b3d4912c9cb66e4db9dfb80a6eecc84ad",
+            .hash = "zglfw-0.1.0-BghZXfnRAACSrPga22je1XilEj1QNXrtv6w4HIUFqdks",
+        },
     },
     .paths = .{
         "build.zig",

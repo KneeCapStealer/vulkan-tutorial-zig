@@ -42,6 +42,7 @@
               ]
               ++ (with pkgs; [
                 zig
+                glfw
               ]);
 
             shellHook = ''
