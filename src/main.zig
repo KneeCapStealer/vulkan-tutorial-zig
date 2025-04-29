@@ -1,19 +1,7 @@
-const std = @import("std");
-const vk = @import("vulkan");
-
-pub fn print() void {
-    std.debug.print("Hello, World!", .{});
-}
+const App = @import("App.zig");
 
 pub fn main() !void {
-    var once = std.once(print);
+    var app = App.init();
 
-    once.call();
-    once.call();
-    once.call();
-    once.call();
-    once.call();
-    once.call();
-    once.call();
-    once.call();
+    try app.run();
 }
