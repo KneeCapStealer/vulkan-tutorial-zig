@@ -24,6 +24,7 @@ window: *glfw.Window,
 vk_base: vk.BaseWrapper,
 instance_wrapper: vk.InstanceWrapper,
 vk_instance: vk.InstanceProxy,
+vk_physical: vk.PhysicalDevice,
 debug_messenger: vk.DebugUtilsMessengerEXT,
 
 pub fn init() App {
@@ -32,6 +33,7 @@ pub fn init() App {
         .vk_base = undefined,
         .instance_wrapper = undefined,
         .vk_instance = undefined,
+        .vk_physical = .null_handle,
         .debug_messenger = .null_handle,
     };
 }
@@ -91,6 +93,36 @@ fn initVulkan(self: *App) !void {
 
     try self.createInstance();
     try self.setupDebugMessenger();
+    try self.pickPhysicalDevice();
+}
+
+fn pickPhysicalDevice(self: *App) !void {
+    const physical_devices = try self.vk_instance.enumeratePhysicalDevicesAlloc(allocator);
+    if (physical_devices.len == 0) {
+        return error.NoVulkanDevice;
+    }
+
+    for (physical_devices) |device| {
+        if (try self.isDeviceSuitable(device)) {
+            self.vk_physical = device;
+        }
+    }
+
+    if (self.vk_physical == .null_handle) {
+        return error.NoSuitableDevice;
+    }
+}
+
+/// Determines if a device can be used for the application
+/// Returns true if the device has all the required features, and false if the device can't run the program
+fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
+    const properties = self.vk_instance.getPhysicalDeviceProperties(device);
+    // const features = self.vk_instance.getPhysicalDeviceFeatures(device);
+
+    const is_discrete = properties.device_type == .discrete_gpu;
+    const queue_families = try self.findQueueFamilies(device);
+
+    return is_discrete and queue_families.isComplete();
 }
 
 /// Creates the App.debug_messenger if debug mode is enabled
@@ -105,6 +137,8 @@ fn setupDebugMessenger(self: *App) !void {
 fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
+        try self.cleanup();
+        std.process.exit(0);
     }
 }
 
@@ -148,6 +182,31 @@ fn getRequiredExtensions() ![]const [*:0]const u8 {
     }
 
     return try extensions.toOwnedSlice();
+}
+
+const QueueFamilyIndices = struct {
+    graphics_family: ?u32,
+
+    pub fn isComplete(self: QueueFamilyIndices) bool {
+        return self.graphics_family != null;
+    }
+};
+
+fn findQueueFamilies(self: *App, device: vk.PhysicalDevice) !QueueFamilyIndices {
+    var indices: QueueFamilyIndices = .{ .graphics_family = null };
+
+    const queue_families = try self.vk_instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
+    for (queue_families, 0..) |queue_family, i| {
+        if (queue_family.queue_flags.graphics_bit) {
+            indices.graphics_family = @intCast(i);
+        }
+
+        if (indices.isComplete()) {
+            break;
+        }
+    }
+
+    return indices;
 }
 
 fn debugCallback(
