@@ -24,6 +24,7 @@ window: *glfw.Window,
 vk_base: vk.BaseWrapper,
 instance_wrapper: vk.InstanceWrapper,
 vk_instance: vk.InstanceProxy,
+debug_messenger: vk.DebugUtilsMessengerEXT,
 
 pub fn init() App {
     return .{
@@ -31,6 +32,7 @@ pub fn init() App {
         .vk_base = undefined,
         .instance_wrapper = undefined,
         .vk_instance = undefined,
+        .debug_messenger = .null_handle,
     };
 }
 
@@ -55,6 +57,7 @@ fn createInstance(self: *App) !void {
         return error.ValidationLayersNotAvailable;
     }
 
+    // Validation layers:
     const enabled_layer_count: u32, const enabled_layer_names: ?[*]const [*:0]const u8 = if (enable_val_layers)
         .{ val_layers.len, val_layers.ptr }
     else
@@ -68,6 +71,7 @@ fn createInstance(self: *App) !void {
         .api_version = @bitCast(vk.API_VERSION_1_0),
     };
 
+    // extensions
     const extensions = try getRequiredExtensions();
     const instance_create_info: vk.InstanceCreateInfo = .{
         .p_application_info = &appInfo,
@@ -75,6 +79,7 @@ fn createInstance(self: *App) !void {
         .pp_enabled_layer_names = enabled_layer_names,
         .enabled_extension_count = @intCast(extensions.len),
         .pp_enabled_extension_names = extensions.ptr,
+        .p_next = if (enable_val_layers) &default_debug_messenger_create_info else null,
     };
     const instance = try self.vk_base.createInstance(&instance_create_info, null);
     self.instance_wrapper = .load(instance, self.vk_base.dispatch.vkGetInstanceProcAddr.?);
@@ -85,6 +90,16 @@ fn initVulkan(self: *App) !void {
     self.vk_base = .load(glfwGetInstanceProcAddress);
 
     try self.createInstance();
+    try self.setupDebugMessenger();
+}
+
+/// Creates the App.debug_messenger if debug mode is enabled
+fn setupDebugMessenger(self: *App) !void {
+    if (!enable_val_layers)
+        return;
+
+    const create_info = default_debug_messenger_create_info;
+    self.debug_messenger = try self.vk_instance.createDebugUtilsMessengerEXT(&create_info, null);
 }
 
 fn mainLoop(self: *App) !void {
@@ -94,6 +109,10 @@ fn mainLoop(self: *App) !void {
 }
 
 fn cleanup(self: *App) !void {
+    if (enable_val_layers) {
+        self.vk_instance.destroyDebugUtilsMessengerEXT(self.debug_messenger, null);
+    }
+
     self.vk_instance.destroyInstance(null);
     glfw.destroyWindow(self.window);
     glfw.terminate();
@@ -130,6 +149,41 @@ fn getRequiredExtensions() ![]const [*:0]const u8 {
 
     return try extensions.toOwnedSlice();
 }
+
+fn debugCallback(
+    message_severity: vk.DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk.DebugUtilsMessageTypeFlagsEXT,
+    callback_data: ?*const vk.DebugUtilsMessengerCallbackDataEXT,
+    user_data: ?*anyopaque,
+) callconv(vk.vulkan_call_conv) vk.Bool32 {
+    _ = user_data;
+    const severity = if (message_severity.info_bit_ext) "INFO" else if (message_severity.verbose_bit_ext) "VERBOSE" else if (message_severity.warning_bit_ext) "\x1b[33mWARNING\x1b[0m" else if (message_severity.error_bit_ext) "\x1b[31mERROR\x1b[0m" else "UNKNOWN";
+    const @"type" = if (message_type.general_bit_ext) "GENERAL" else if (message_type.validation_bit_ext) "VALIDATION" else if (message_type.performance_bit_ext) "\x1b[34mPERFORMANCE\x1b[0m" else if (message_type.device_address_binding_bit_ext) "DEVICE ADDRESS BINDING" else "UNKNOWN";
+
+    std.debug.print("\n[DEBUG] [{s}] [{s}]: {s}\n", .{ severity, @"type", callback_data.?.p_message.? });
+
+    return vk.FALSE;
+}
+
+const default_debug_messenger_create_info: vk.DebugUtilsMessengerCreateInfoEXT = .{
+    // Enable all kinds of Validation messages
+    .message_severity = .{
+        .error_bit_ext = true,
+        .warning_bit_ext = true,
+        .verbose_bit_ext = true,
+        // Info is WAAAY too verbose
+        .info_bit_ext = false,
+    },
+    // Enabled all kinds of Validation types
+    .message_type = .{
+        .performance_bit_ext = true,
+        .validation_bit_ext = true,
+        .general_bit_ext = true,
+        // Requires extension, not in core
+        .device_address_binding_bit_ext = false,
+    },
+    .pfn_user_callback = debugCallback,
+};
 
 // Define the function ourselves because glfw.getInstanceProcAddr doesn't use correct types
 extern fn glfwGetInstanceProcAddress(vk.Instance, [*:0]const u8) callconv(.C) vk.PfnVoidFunction;
