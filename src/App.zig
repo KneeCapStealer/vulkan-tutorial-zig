@@ -25,6 +25,10 @@ vk_base: vk.BaseWrapper,
 instance_wrapper: vk.InstanceWrapper,
 vk_instance: vk.InstanceProxy,
 vk_physical: vk.PhysicalDevice,
+device_wrapper: vk.DeviceWrapper,
+vk_device: vk.DeviceProxy,
+graphics_queue: vk.QueueProxy,
+
 debug_messenger: vk.DebugUtilsMessengerEXT,
 
 pub fn init() App {
@@ -34,6 +38,9 @@ pub fn init() App {
         .instance_wrapper = undefined,
         .vk_instance = undefined,
         .vk_physical = .null_handle,
+        .device_wrapper = undefined,
+        .vk_device = undefined,
+        .graphics_queue = undefined,
         .debug_messenger = .null_handle,
     };
 }
@@ -94,6 +101,37 @@ fn initVulkan(self: *App) !void {
     try self.createInstance();
     try self.setupDebugMessenger();
     try self.pickPhysicalDevice();
+    try self.createLogicalDevice();
+}
+
+/// Create logical device to encapsulate physical device
+fn createLogicalDevice(self: *App) !void {
+    const indices = try self.findQueueFamilies(self.vk_physical);
+    const queue_prio: f32 = 1.0;
+
+    // Only create 1 graphics queue
+    const queue_create_info: vk.DeviceQueueCreateInfo = .{
+        .queue_family_index = indices.graphics_family.?,
+        .queue_count = 1,
+        .p_queue_priorities = @ptrCast(&queue_prio),
+    };
+
+    // Activate no features for now
+    const device_features: vk.PhysicalDeviceFeatures = .{};
+    const create_info: vk.DeviceCreateInfo = .{
+        .p_queue_create_infos = @ptrCast(&queue_create_info),
+        .queue_create_info_count = 1,
+        .p_enabled_features = &device_features,
+    };
+
+    // Device creation
+    const device = try self.vk_instance.createDevice(self.vk_physical, &create_info, null);
+    self.device_wrapper = .load(device, self.instance_wrapper.dispatch.vkGetDeviceProcAddr.?);
+    self.vk_device = .init(device, &self.device_wrapper);
+
+    // Device Queue handle
+    const queue = self.vk_device.getDeviceQueue(indices.graphics_family.?, 0);
+    self.graphics_queue = .init(queue, &self.device_wrapper);
 }
 
 fn pickPhysicalDevice(self: *App) !void {
@@ -143,6 +181,8 @@ fn mainLoop(self: *App) !void {
 }
 
 fn cleanup(self: *App) !void {
+    self.vk_device.destroyDevice(null);
+
     if (enable_val_layers) {
         self.vk_instance.destroyDebugUtilsMessengerEXT(self.debug_messenger, null);
     }
