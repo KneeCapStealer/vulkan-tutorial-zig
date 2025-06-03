@@ -44,6 +44,10 @@
             .url = "git+https://github.com/IridescenceTech/zglfw.git#5d25d66b3d4912c9cb66e4db9dfb80a6eecc84ad",
             .hash = "zglfw-0.1.0-BghZXfnRAACSrPga22je1XilEj1QNXrtv6w4HIUFqdks",
         },
+        .ziglangSet = .{
+            .url = "git+https://github.com/deckarep/ziglang-set.git#66c5ab9ca1ca67bee2ac19d854589b3cf23cd6fe",
+            .hash = "ziglangSet-0.0.1-VUjv0poUAgCNnJ8mjuXpZ81KSDap5Nmd_WLb7hFRS18f",
+        },
     },
     .paths = .{
         "build.zig",

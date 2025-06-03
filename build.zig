@@ -27,6 +27,9 @@ pub fn build(b: *std.Build) void {
     const glfw = b.dependency("zglfw", .{}).module("glfw");
     exe.root_module.addImport("glfw", glfw);
 
+    const ziglangSet = b.dependency("ziglangSet", .{});
+    exe.root_module.addImport("set", ziglangSet.module("ziglangSet"));
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
 

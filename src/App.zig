@@ -1,6 +1,6 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const mem = std.mem;
+const builtin = @import("builtin");
 
 const glfw = @import("glfw");
 const vk = @import("vulkan");
@@ -28,11 +28,12 @@ vk_physical: vk.PhysicalDevice,
 device_wrapper: vk.DeviceWrapper,
 vk_device: vk.DeviceProxy,
 graphics_queue: vk.QueueProxy,
-
+present_queue: vk.QueueProxy,
 debug_messenger: vk.DebugUtilsMessengerEXT,
+surface: vk.SurfaceKHR,
 
 pub fn init() App {
-    return .{
+    return App{
         .window = undefined,
         .vk_base = undefined,
         .instance_wrapper = undefined,
@@ -41,7 +42,9 @@ pub fn init() App {
         .device_wrapper = undefined,
         .vk_device = undefined,
         .graphics_queue = undefined,
+        .present_queue = undefined,
         .debug_messenger = .null_handle,
+        .surface = .null_handle,
     };
 }
 
@@ -95,11 +98,18 @@ fn createInstance(self: *App) !void {
     self.vk_instance = .init(instance, &self.instance_wrapper);
 }
 
+fn createSurface(self: *App) !void {
+    if (glfw.createWindowSurface(@intFromEnum(self.vk_instance.handle), self.window, null, @ptrCast(&self.surface)) != glfw.VkResult.success) {
+        return error.WindowSurfaceCreationFailed;
+    }
+}
+
 fn initVulkan(self: *App) !void {
     self.vk_base = .load(glfwGetInstanceProcAddress);
 
     try self.createInstance();
     try self.setupDebugMessenger();
+    try self.createSurface();
     try self.pickPhysicalDevice();
     try self.createLogicalDevice();
 }
@@ -107,20 +117,33 @@ fn initVulkan(self: *App) !void {
 /// Create logical device to encapsulate physical device
 fn createLogicalDevice(self: *App) !void {
     const indices = try self.findQueueFamilies(self.vk_physical);
+    if (!indices.isComplete()) {
+        return error.FailedToFindQueueFamilies;
+    }
+
+    var unique_queue_families: @import("set").Set(u32) = try .initCapacity(allocator, 1);
+    _ = try unique_queue_families.appendSlice(&.{ indices.present_family.?, indices.graphics_family.? });
+
+    var iter = unique_queue_families.iterator();
+    var queue_create_infos: std.ArrayList(vk.DeviceQueueCreateInfo) = try .initCapacity(allocator, 1);
+    defer queue_create_infos.deinit();
+
     const queue_prio: f32 = 1.0;
 
-    // Only create 1 graphics queue
-    const queue_create_info: vk.DeviceQueueCreateInfo = .{
-        .queue_family_index = indices.graphics_family.?,
-        .queue_count = 1,
-        .p_queue_priorities = @ptrCast(&queue_prio),
-    };
+    var i: usize = 0;
+    while (iter.next()) |queue_family| : (i += 1) {
+        try queue_create_infos.append(vk.DeviceQueueCreateInfo{
+            .queue_family_index = queue_family.*,
+            .queue_count = 1,
+            .p_queue_priorities = @ptrCast(&queue_prio),
+        });
+    }
 
     // Activate no features for now
     const device_features: vk.PhysicalDeviceFeatures = .{};
     const create_info: vk.DeviceCreateInfo = .{
-        .p_queue_create_infos = @ptrCast(&queue_create_info),
-        .queue_create_info_count = 1,
+        .p_queue_create_infos = queue_create_infos.items.ptr,
+        .queue_create_info_count = @intCast(queue_create_infos.items.len),
         .p_enabled_features = &device_features,
     };
 
@@ -129,9 +152,12 @@ fn createLogicalDevice(self: *App) !void {
     self.device_wrapper = .load(device, self.instance_wrapper.dispatch.vkGetDeviceProcAddr.?);
     self.vk_device = .init(device, &self.device_wrapper);
 
-    // Device Queue handle
-    const queue = self.vk_device.getDeviceQueue(indices.graphics_family.?, 0);
-    self.graphics_queue = .init(queue, &self.device_wrapper);
+    // Device Queue handles
+    const graphics_queue = self.vk_device.getDeviceQueue(indices.graphics_family.?, 0);
+    self.graphics_queue = .init(graphics_queue, &self.device_wrapper);
+
+    const present_queue = self.vk_device.getDeviceQueue(indices.present_family.?, 0);
+    self.graphics_queue = .init(present_queue, &self.device_wrapper);
 }
 
 fn pickPhysicalDevice(self: *App) !void {
@@ -187,6 +213,7 @@ fn cleanup(self: *App) !void {
         self.vk_instance.destroyDebugUtilsMessengerEXT(self.debug_messenger, null);
     }
 
+    self.vk_instance.destroySurfaceKHR(self.surface, null);
     self.vk_instance.destroyInstance(null);
     glfw.destroyWindow(self.window);
     glfw.terminate();
@@ -225,20 +252,27 @@ fn getRequiredExtensions() ![]const [*:0]const u8 {
 }
 
 const QueueFamilyIndices = struct {
-    graphics_family: ?u32,
+    graphics_family: ?u32 = null,
+    present_family: ?u32 = null,
 
     pub fn isComplete(self: QueueFamilyIndices) bool {
-        return self.graphics_family != null;
+        return self.graphics_family != null and self.present_family != null;
     }
 };
 
 fn findQueueFamilies(self: *App, device: vk.PhysicalDevice) !QueueFamilyIndices {
-    var indices: QueueFamilyIndices = .{ .graphics_family = null };
+    var indices: QueueFamilyIndices = .{};
 
     const queue_families = try self.vk_instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
     for (queue_families, 0..) |queue_family, i| {
+        const index: u32 = @intCast(i);
+
         if (queue_family.queue_flags.graphics_bit) {
-            indices.graphics_family = @intCast(i);
+            indices.graphics_family = index;
+        }
+
+        if (try self.vk_instance.getPhysicalDeviceSurfaceSupportKHR(device, index, self.surface) != 0) {
+            indices.present_family = index;
         }
 
         if (indices.isComplete()) {
