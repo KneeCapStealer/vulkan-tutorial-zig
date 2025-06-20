@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 
 const glfw = @import("glfw");
 const vk = @import("vulkan");
+const set = @import("set");
 
 const App = @This();
 
@@ -20,31 +21,53 @@ const val_layers: []const [*:0]const u8 = &.{
     "VK_LAYER_KHRONOS_validation",
 };
 
+const device_extensions: []const [*:0]const u8 = &.{
+    vk.extensions.khr_swapchain.name,
+};
+
 window: *glfw.Window,
+surface: vk.SurfaceKHR,
+
 vk_base: vk.BaseWrapper,
 instance_wrapper: vk.InstanceWrapper,
 vk_instance: vk.InstanceProxy,
+
 vk_physical: vk.PhysicalDevice,
 device_wrapper: vk.DeviceWrapper,
 vk_device: vk.DeviceProxy,
+
 graphics_queue: vk.QueueProxy,
 present_queue: vk.QueueProxy,
+
 debug_messenger: vk.DebugUtilsMessengerEXT,
-surface: vk.SurfaceKHR,
+
+swap_chain: vk.SwapchainKHR,
+swap_chain_images: []vk.Image,
+swap_chain_image_format: vk.Format,
+swap_chain_extent: vk.Extent2D,
 
 pub fn init() App {
     return App{
         .window = undefined,
+        .surface = .null_handle,
+
         .vk_base = undefined,
         .instance_wrapper = undefined,
         .vk_instance = undefined,
+
         .vk_physical = .null_handle,
         .device_wrapper = undefined,
         .vk_device = undefined,
+
         .graphics_queue = undefined,
         .present_queue = undefined,
+
         .debug_messenger = .null_handle,
-        .surface = .null_handle,
+
+        .swap_chain = .null_handle,
+        .swap_chain_images = undefined,
+        .swap_chain_extent = undefined,
+        .swap_chain_image_format = undefined,
     };
 }
 
@@ -112,16 +135,81 @@ fn initVulkan(self: *App) !void {
     try self.createSurface();
     try self.pickPhysicalDevice();
     try self.createLogicalDevice();
+    try self.createSwapChain();
+}
+
+fn createSwapChain(self: *App) !void {
+    const swap_chain_details = try self.querySwapChainSupport(self.vk_physical);
+
+    // Find optimal settings for the swap chain.
+    const format = self.chooseSwapSurfaceFormat(swap_chain_details.formats);
+    const present_mode = self.chooseSwapPresentMode(swap_chain_details.present_modes);
+    const extent = self.chooseSwapExtent(&swap_chain_details.capabilites);
+
+    // Calculate numer of images in swapchain (probably 3 or 4).
+    const requested_image_count = swap_chain_details.capabilites.min_image_count + 1;
+    const image_count =
+        if (swap_chain_details.capabilites.max_image_count == 0) requested_image_count else std.math.clamp(requested_image_count, swap_chain_details.capabilites.min_image_count, swap_chain_details.capabilites.max_image_count);
+
+    // Get the queues to render to the swap chain images.
+    const queue_families = try self.findQueueFamilies(self.vk_physical);
+    const indices: [*]const u32 = &[_]u32{ queue_families.graphics_family.?, queue_families.present_family.? };
+
+    // If we need 2 queues we need some different settings than if we only need 1 queue.
+    const image_sharing_mode: vk.SharingMode, const queue_family_index_count: u32, const queue_family_indices: ?[*]const u32 =
+        // Only 1 queue to use.
+        if (queue_families.present_family == queue_families.graphics_family)
+            .{ vk.SharingMode.exclusive, 0, null }
+            // Use both queues.
+        else
+            .{ vk.SharingMode.concurrent, 2, indices };
+
+    const swap_chain_create_info: vk.SwapchainCreateInfoKHR = .{
+        .surface = self.surface,
+        // All of the optimal settings we found previously.
+        .min_image_count = image_count,
+        .image_extent = extent,
+        .present_mode = present_mode,
+        .image_format = format.format,
+        .image_color_space = format.color_space,
+        // This is almost always the case.
+        .image_array_layers = 1,
+        // We will be rendering directly to the framebuffer.
+        // Don't do this if you want to add post processing.
+        .image_usage = .{ .color_attachment_bit = true },
+        // Depending on hardware we may need to use multiple queues.
+        // And to keep the tutorial simple we use concurrent mode for this, even though it is less performant.
+        .image_sharing_mode = image_sharing_mode,
+        .queue_family_index_count = queue_family_index_count,
+        .p_queue_family_indices = queue_family_indices,
+        // No transform applied.
+        .pre_transform = swap_chain_details.capabilites.current_transform,
+        // Don't blend the image with other windows or the background.
+        .composite_alpha = .{ .opaque_bit_khr = true },
+        // If pixels are obscured (another window is covering them), don't render their color.
+        // This might be a bad option for some post processing effects, but it enabled better performance.
+        .clipped = vk.TRUE,
+        // Since we don't have an old swapchain, this value is null
+        // If we were recreating a swapchain (e.g. when resizing), this field MUST be specified
+        .old_swapchain = vk.SwapchainKHR.null_handle,
+    };
+
+    self.swap_chain = try self.vk_device.createSwapchainKHR(&swap_chain_create_info, null);
+    self.swap_chain_images = try self.vk_device.getSwapchainImagesAllocKHR(self.swap_chain, allocator);
+
+    self.swap_chain_image_format = format.format;
+    self.swap_chain_extent = extent;
 }
 
 /// Create logical device to encapsulate physical device
+/// and it's queues
 fn createLogicalDevice(self: *App) !void {
     const indices = try self.findQueueFamilies(self.vk_physical);
     if (!indices.isComplete()) {
         return error.FailedToFindQueueFamilies;
     }
 
-    var unique_queue_families: @import("set").Set(u32) = try .initCapacity(allocator, 1);
+    var unique_queue_families: set.Set(u32) = try .initCapacity(allocator, 1);
     _ = try unique_queue_families.appendSlice(&.{ indices.present_family.?, indices.graphics_family.? });
 
     var iter = unique_queue_families.iterator();
@@ -145,6 +233,8 @@ fn createLogicalDevice(self: *App) !void {
         .p_queue_create_infos = queue_create_infos.items.ptr,
         .queue_create_info_count = @intCast(queue_create_infos.items.len),
         .p_enabled_features = &device_features,
+        .pp_enabled_extension_names = device_extensions.ptr,
+        .enabled_extension_count = device_extensions.len,
     };
 
     // Device creation
@@ -185,8 +275,41 @@ fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
 
     const is_discrete = properties.device_type == .discrete_gpu;
     const queue_families = try self.findQueueFamilies(device);
+    const extensions_supported = try self.checkDeviceExtensionSupport(device);
 
-    return is_discrete and queue_families.isComplete();
+    const swap_chain_adequate = blk: {
+        if (!extensions_supported)
+            break :blk false;
+
+        const swap_chain_details = try self.querySwapChainSupport(device);
+        defer allocator.free(swap_chain_details.formats);
+        defer allocator.free(swap_chain_details.present_modes);
+        break :blk swap_chain_details.formats.len != 0 and swap_chain_details.present_modes.len != 0;
+    };
+
+    return is_discrete and queue_families.isComplete() and extensions_supported and swap_chain_adequate;
+}
+
+fn checkDeviceExtensionSupport(self: *App, device: vk.PhysicalDevice) !bool {
+    const available_extensions = try self.vk_instance.enumerateDeviceExtensionPropertiesAlloc(device, null, allocator);
+
+    outer: for (device_extensions) |required| {
+        for (available_extensions) |available| {
+            // Convert from type: [256]u8 to a null terminated slice [:0]const u8.
+            // As the value of `available.extension_name` is always null terminated
+            // according to the vulkan spec
+            const name: [:0]const u8 = mem.span(@as([*:0]const u8, @ptrCast(&available.extension_name)));
+            if (mem.eql(u8, name, mem.span(required))) {
+                continue :outer;
+            }
+        }
+
+        // required extension not found
+        return false;
+    }
+
+    // All required extensions are found
+    return true;
 }
 
 /// Creates the App.debug_messenger if debug mode is enabled
@@ -207,6 +330,7 @@ fn mainLoop(self: *App) !void {
 }
 
 fn cleanup(self: *App) !void {
+    self.vk_device.destroySwapchainKHR(self.swap_chain, null);
     self.vk_device.destroyDevice(null);
 
     if (enable_val_layers) {
@@ -222,11 +346,13 @@ fn cleanup(self: *App) !void {
 fn checkValLayerSupport(self: *App) !bool {
     const available_layers = try self.vk_base.enumerateInstanceLayerPropertiesAlloc(allocator);
 
-    outer: for (val_layers) |layer_name| {
-        const layer_name_len = mem.len(layer_name);
-
-        for (available_layers) |layer| {
-            if (mem.eql(u8, mem.span(layer_name), layer.layer_name[0..layer_name_len])) {
+    outer: for (val_layers) |required| {
+        for (available_layers) |available| {
+            // Convert from type: [256]u8 to a null terminated slice [:0]const u8.
+            // As the value of `available.layer_name` is always null terminated
+            // according to the vulkan spec
+            const name: [:0]const u8 = mem.span(@as([*:0]const u8, @ptrCast(&available.layer_name)));
+            if (mem.eql(u8, mem.span(required), name)) {
                 continue :outer;
             }
         }
@@ -281,6 +407,59 @@ fn findQueueFamilies(self: *App, device: vk.PhysicalDevice) !QueueFamilyIndices 
     }
 
     return indices;
+}
+
+const SwapChainSupportDetails = struct {
+    capabilites: vk.SurfaceCapabilitiesKHR,
+    formats: []vk.SurfaceFormatKHR,
+    present_modes: []vk.PresentModeKHR,
+};
+
+fn querySwapChainSupport(self: *const App, device: vk.PhysicalDevice) !SwapChainSupportDetails {
+    const capabilities = try self.vk_instance.getPhysicalDeviceSurfaceCapabilitiesKHR(device, self.surface);
+    const formats = try self.vk_instance.getPhysicalDeviceSurfaceFormatsAllocKHR(device, self.surface, allocator);
+    const present_modes = try self.vk_instance.getPhysicalDeviceSurfacePresentModesAllocKHR(device, self.surface, allocator);
+
+    return SwapChainSupportDetails{
+        .capabilites = capabilities,
+        .formats = formats,
+        .present_modes = present_modes,
+    };
+}
+
+fn chooseSwapSurfaceFormat(_: *const App, formats: []const vk.SurfaceFormatKHR) vk.SurfaceFormatKHR {
+    for (formats) |format| {
+        if (format.format == .b8g8r8a8_srgb and format.color_space == .srgb_nonlinear_khr) {
+            return format;
+        }
+    }
+
+    return formats[0];
+}
+
+fn chooseSwapPresentMode(_: *const App, present_modes: []const vk.PresentModeKHR) vk.PresentModeKHR {
+    for (present_modes) |present_mode| {
+        // Tripple buffering vsync
+        if (present_mode == .mailbox_khr)
+            return present_mode;
+    }
+
+    // Vsync
+    return vk.PresentModeKHR.fifo_khr;
+}
+
+fn chooseSwapExtent(self: *App, capabilities: *const vk.SurfaceCapabilitiesKHR) vk.Extent2D {
+    if (capabilities.current_extent.width != std.math.maxInt(u32)) {
+        return capabilities.current_extent;
+    }
+
+    var framebuffer_width: c_int, var framebuffer_height: c_int = .{ undefined, undefined };
+    glfw.getFramebufferSize(self.window, &framebuffer_width, &framebuffer_height);
+
+    return vk.Extent2D{
+        .width = std.math.clamp(@as(u32, @intCast(framebuffer_width)), capabilities.min_image_extent.width, capabilities.max_image_extent.width),
+        .height = std.math.clamp(@as(u32, @intCast(framebuffer_height)), capabilities.min_image_extent.height, capabilities.max_image_extent.height),
+    };
 }
 
 fn debugCallback(
