@@ -45,6 +45,7 @@ swap_chain: vk.SwapchainKHR,
 swap_chain_images: []vk.Image,
 swap_chain_image_format: vk.Format,
 swap_chain_extent: vk.Extent2D,
+swap_chain_image_views: []vk.ImageView,
 
 pub fn init() App {
     return App{
@@ -68,6 +69,7 @@ pub fn init() App {
         .swap_chain_images = undefined,
         .swap_chain_extent = undefined,
         .swap_chain_image_format = undefined,
+        .swap_chain_image_views = undefined,
     };
 }
 
@@ -136,6 +138,34 @@ fn initVulkan(self: *App) !void {
     try self.pickPhysicalDevice();
     try self.createLogicalDevice();
     try self.createSwapChain();
+    try self.createImageViews();
+}
+
+fn createImageViews(self: *App) !void {
+    self.swap_chain_image_views = try allocator.alloc(vk.ImageView, self.swap_chain_images.len);
+
+    for (self.swap_chain_images, 0..) |image, i| {
+        const create_info: vk.ImageViewCreateInfo = .{
+            .image = image,
+            .view_type = .@"2d",
+            .format = self.swap_chain_image_format,
+            .components = .{
+                .a = .identity,
+                .b = .identity,
+                .g = .identity,
+                .r = .identity,
+            },
+            .subresource_range = .{
+                .aspect_mask = .{ .color_bit = true },
+                .base_mip_level = 0,
+                .layer_count = 1,
+                .level_count = 1,
+                .base_array_layer = 0,
+            },
+        };
+
+        self.swap_chain_image_views[i] = try self.vk_device.createImageView(&create_info, null);
+    }
 }
 
 fn createSwapChain(self: *App) !void {
@@ -330,6 +360,10 @@ fn mainLoop(self: *App) !void {
 }
 
 fn cleanup(self: *App) !void {
+    for (self.swap_chain_image_views) |view| {
+        self.vk_device.destroyImageView(view, null);
+    }
+
     self.vk_device.destroySwapchainKHR(self.swap_chain, null);
     self.vk_device.destroyDevice(null);
 
