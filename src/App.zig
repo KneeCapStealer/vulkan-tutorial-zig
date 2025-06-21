@@ -139,6 +139,53 @@ fn initVulkan(self: *App) !void {
     try self.createLogicalDevice();
     try self.createSwapChain();
     try self.createImageViews();
+    try self.createGraphicsPipeline();
+}
+
+fn createGraphicsPipeline(self: *App) !void {
+    const vertex_shader = try std.fs.cwd().openFile("../shaders/out/vert.spv", std.fs.File.OpenFlags{
+        .lock = .shared,
+        .mode = .read_only,
+    });
+    errdefer vertex_shader.close();
+    const fragment_shader = try std.fs.cwd().openFile("../shaders/out/frag.spv", std.fs.File.OpenFlags{
+        .lock = .shared,
+        .mode = .read_only,
+    });
+    errdefer fragment_shader.close();
+
+    const vert_code = try vertex_shader.readToEndAlloc(allocator, std.math.maxInt(usize));
+    vertex_shader.close();
+    const frag_code = try fragment_shader.readToEndAlloc(allocator, std.math.maxInt(usize));
+    fragment_shader.close();
+
+    const vert_shader_module = try self.createShaderModule(vert_code);
+    defer self.vk_device.destroyShaderModule(vert_shader_module, null);
+    const frag_shader_module = try self.createShaderModule(frag_code);
+    defer self.vk_device.destroyShaderModule(frag_shader_module, null);
+
+    const vert_shader_stage_info: vk.PipelineShaderStageCreateInfo = .{
+        .module = vert_shader_module,
+        .stage = .{ .vertex_bit = true },
+        .p_name = "main",
+    };
+    const frag_shader_stage_info: vk.PipelineShaderStageCreateInfo = .{
+        .module = frag_shader_module,
+        .stage = .{ .fragment_bit = true },
+        .p_name = "main",
+    };
+
+    const shader_stages: [2]vk.PipelineShaderStageCreateInfo = .{ vert_shader_stage_info, frag_shader_stage_info };
+    _ = shader_stages;
+}
+
+fn createShaderModule(self: *App, code: []const u8) !vk.ShaderModule {
+    const create_info: vk.ShaderModuleCreateInfo = .{
+        .code_size = code.len,
+        .p_code = @ptrCast(code.ptr),
+    };
+
+    return try self.vk_device.createShaderModule(create_info, null);
 }
 
 fn createImageViews(self: *App) !void {
