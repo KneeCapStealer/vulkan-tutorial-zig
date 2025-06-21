@@ -39,6 +39,7 @@
                 vulkan-headers
                 vulkan-loader
                 vulkan-validation-layers
+                glslang
               ]
               ++ (with pkgs; [
                 zig
