@@ -177,6 +177,25 @@ fn createGraphicsPipeline(self: *App) !void {
 
     const shader_stages: [2]vk.PipelineShaderStageCreateInfo = .{ vert_shader_stage_info, frag_shader_stage_info };
     _ = shader_stages;
+
+    // States that are dynamic in the pipeline
+    const dynamic_states: []const vk.DynamicState = .{
+        vk.DynamicState.viewport,
+        vk.DynamicState.scissor,
+    };
+
+    const dynamic_state: vk.PipelineDynamicStateCreateInfo = .{ .dynamic_state_count = dynamic_states.len, .p_dynamic_states = dynamic_states.ptr, };
+
+    const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{ .vertex_binding_description_count = 0, .vertex_attribute_description_count = 0 };
+
+    const input_assembly: vk.PipelineInputAssemblyStateCreateInfo = .{ .topology = .triangle_list, .primitive_restart_enable = vk.FALSE };
+
+    const viewport: vk.Viewport = .{ .width = @floatFromInt(self.swap_chain_extent.width), .height = @floatFromInt(self.swap_chain_extent.height), .x = 0, .y = 0, .max_depth = 1, .min_depth = 0, };
+
+    const scissor: vk.Rect2D = .{ .extent = self.swap_chain_extent, .offset = .{ .y = 0, .x = 0 } };
+
+    const viewport_state: vk.PipelineViewportStateCreateInfo = .{ .viewport_count = 1, .p_viewports = &viewport, .scissor_count = 1, .p_scissors = &scissor };
+
 }
 
 fn createShaderModule(self: *App, code: []const u8) !vk.ShaderModule {
