@@ -47,6 +47,10 @@ swap_chain_image_format: vk.Format,
 swap_chain_extent: vk.Extent2D,
 swap_chain_image_views: []vk.ImageView,
 
+render_pass: vk.RenderPass,
+pipeline_layout: vk.PipelineLayout,
+graphics_pipeline: vk.Pipeline,
+
 pub fn init() App {
     return App{
         .window = undefined,
@@ -70,6 +74,10 @@ pub fn init() App {
         .swap_chain_extent = undefined,
         .swap_chain_image_format = undefined,
         .swap_chain_image_views = undefined,
+
+        .render_pass = .null_handle,
+        .pipeline_layout = .null_handle,
+        .graphics_pipeline = .null_handle,
     };
 }
 
@@ -139,16 +147,50 @@ fn initVulkan(self: *App) !void {
     try self.createLogicalDevice();
     try self.createSwapChain();
     try self.createImageViews();
+    try self.createRenderPass();
     try self.createGraphicsPipeline();
 }
 
+fn createRenderPass(self: *App) !void {
+    const color_attachment: vk.AttachmentDescription = .{
+        .format = self.swap_chain_image_format,
+        .samples = .{ .@"1_bit" = true },
+        .load_op = .clear,
+        .store_op = .store,
+        .stencil_load_op = .dont_care,
+        .stencil_store_op = .dont_care,
+        .initial_layout = .undefined,
+        .final_layout = .present_src_khr,
+    };
+
+    const color_Attachment_ref: vk.AttachmentReference = .{ .attachment = 0, .layout = .color_attachment_optimal };
+
+    const subpass: vk.SubpassDescription = .{
+        .pipeline_bind_point = .graphics,
+        .color_attachment_count = 1,
+        .p_color_attachments = @ptrCast(&color_Attachment_ref),
+    };
+
+    const render_pass_info: vk.RenderPassCreateInfo = .{
+        .attachment_count = 1,
+        .p_attachments = @ptrCast(&color_attachment),
+        .subpass_count = 1,
+        .p_subpasses = @ptrCast(&subpass),
+    };
+
+    self.render_pass = try self.vk_device.createRenderPass(&render_pass_info, null);
+}
+
 fn createGraphicsPipeline(self: *App) !void {
-    const vertex_shader = try std.fs.cwd().openFile("../shaders/out/vert.spv", std.fs.File.OpenFlags{
+    // COMMENT THIS !!!!
+
+    const vertex_shader = try std.fs.cwd().openFile("shaders/out/vert.spv", std.fs.File.OpenFlags{
         .lock = .shared,
         .mode = .read_only,
     });
+
     errdefer vertex_shader.close();
-    const fragment_shader = try std.fs.cwd().openFile("../shaders/out/frag.spv", std.fs.File.OpenFlags{
+    const fragment_shader = try std.fs.cwd().openFile("shaders/out/frag.spv", std.fs.File.OpenFlags{
         .lock = .shared,
         .mode = .read_only,
     });
@@ -176,35 +218,108 @@ fn createGraphicsPipeline(self: *App) !void {
     };
 
     const shader_stages: [2]vk.PipelineShaderStageCreateInfo = .{ vert_shader_stage_info, frag_shader_stage_info };
-    _ = shader_stages;
 
     // States that are dynamic in the pipeline
-    const dynamic_states: []const vk.DynamicState = .{
+    const dynamic_states: []const vk.DynamicState = &.{
         vk.DynamicState.viewport,
         vk.DynamicState.scissor,
     };
 
-    const dynamic_state: vk.PipelineDynamicStateCreateInfo = .{ .dynamic_state_count = dynamic_states.len, .p_dynamic_states = dynamic_states.ptr, };
+    const dynamic_state: vk.PipelineDynamicStateCreateInfo = .{
+        .dynamic_state_count = dynamic_states.len,
+        .p_dynamic_states = dynamic_states.ptr,
+    };
 
     const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{ .vertex_binding_description_count = 0, .vertex_attribute_description_count = 0 };
 
     const input_assembly: vk.PipelineInputAssemblyStateCreateInfo = .{ .topology = .triangle_list, .primitive_restart_enable = vk.FALSE };
 
-    const viewport: vk.Viewport = .{ .width = @floatFromInt(self.swap_chain_extent.width), .height = @floatFromInt(self.swap_chain_extent.height), .x = 0, .y = 0, .max_depth = 1, .min_depth = 0, };
+    const viewport: vk.Viewport = .{
+        .width = @floatFromInt(self.swap_chain_extent.width),
+        .height = @floatFromInt(self.swap_chain_extent.height),
+        .x = 0,
+        .y = 0,
+        .max_depth = 1,
+        .min_depth = 0,
+    };
 
     const scissor: vk.Rect2D = .{ .extent = self.swap_chain_extent, .offset = .{ .y = 0, .x = 0 } };
 
-    const viewport_state: vk.PipelineViewportStateCreateInfo = .{ .viewport_count = 1, .p_viewports = &viewport, .scissor_count = 1, .p_scissors = &scissor };
+    const viewport_state: vk.PipelineViewportStateCreateInfo = .{ .viewport_count = 1, .p_viewports = @ptrCast(&viewport), .scissor_count = 1, .p_scissors = @ptrCast(&scissor) };
 
+    const rasterizer: vk.PipelineRasterizationStateCreateInfo = .{
+        .depth_clamp_enable = vk.FALSE,
+        .rasterizer_discard_enable = vk.FALSE,
+        .polygon_mode = .fill,
+        .line_width = 1,
+        .cull_mode = .{ .back_bit = true },
+        .front_face = .clockwise,
+        .depth_bias_enable = vk.FALSE,
+        .depth_bias_clamp = 0,
+        .depth_bias_constant_factor = 0,
+        .depth_bias_slope_factor = 0,
+    };
+
+    const multisampling: vk.PipelineMultisampleStateCreateInfo = .{
+        .sample_shading_enable = vk.FALSE,
+        .rasterization_samples = .{ .@"1_bit" = true },
+        .min_sample_shading = 1,
+        .alpha_to_coverage_enable = vk.FALSE,
+        .alpha_to_one_enable = vk.FALSE,
+    };
+
+    const color_blend_attachment: vk.PipelineColorBlendAttachmentState = .{
+        .color_write_mask = .{ .a_bit = true, .b_bit = true, .g_bit = true, .r_bit = true },
+        .blend_enable = vk.FALSE,
+        .src_color_blend_factor = .one,
+        .dst_color_blend_factor = .zero,
+        .color_blend_op = .add,
+        .src_alpha_blend_factor = .one,
+        .dst_alpha_blend_factor = .zero,
+        .alpha_blend_op = .add,
+    };
+
+    const color_blend: vk.PipelineColorBlendStateCreateInfo = .{
+        .logic_op_enable = vk.FALSE,
+        .logic_op = .copy,
+        .attachment_count = 1,
+        .p_attachments = @ptrCast(&color_blend_attachment),
+        .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
+    };
+
+    const pipeline_layout_info: vk.PipelineLayoutCreateInfo = .{};
+
+    self.pipeline_layout = try self.vk_device.createPipelineLayout(&pipeline_layout_info, null);
+
+    const pipeline_info: vk.GraphicsPipelineCreateInfo = .{
+        .stage_count = 2,
+        .p_stages = &shader_stages,
+        .p_vertex_input_state = &vertex_input_info,
+        .p_input_assembly_state = &input_assembly,
+        .p_viewport_state = &viewport_state,
+        .p_rasterization_state = &rasterizer,
+        .p_multisample_state = &multisampling,
+        .p_depth_stencil_state = null,
+        .p_color_blend_state = &color_blend,
+        .p_dynamic_state = &dynamic_state,
+        .layout = self.pipeline_layout,
+        .render_pass = self.render_pass,
+        .subpass = 0,
+        .base_pipeline_handle = .null_handle,
+        .base_pipeline_index = -1,
+    };
+
+    _ = try self.vk_device.createGraphicsPipelines(.null_handle, 1, @ptrCast(&pipeline_info), null, @ptrCast(&self.graphics_pipeline));
 }
 
+/// Takes in raw shader code, and spits out a shader module. !!(Lifetime of the code slice must match or outlive the shadermodule)!!
 fn createShaderModule(self: *App, code: []const u8) !vk.ShaderModule {
     const create_info: vk.ShaderModuleCreateInfo = .{
         .code_size = code.len,
-        .p_code = @ptrCast(code.ptr),
+        .p_code = @ptrCast(@alignCast(code.ptr)),
     };
 
-    return try self.vk_device.createShaderModule(create_info, null);
+    return try self.vk_device.createShaderModule(&create_info, null);
 }
 
 fn createImageViews(self: *App) !void {
@@ -420,12 +535,17 @@ fn setupDebugMessenger(self: *App) !void {
 fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
+        // testing cleanup
         try self.cleanup();
         std.process.exit(0);
     }
 }
 
 fn cleanup(self: *App) !void {
+    self.vk_device.destroyPipeline(self.graphics_pipeline, null);
+    self.vk_device.destroyPipelineLayout(self.pipeline_layout, null);
+    self.vk_device.destroyRenderPass(self.render_pass, null);
+
     for (self.swap_chain_image_views) |view| {
         self.vk_device.destroyImageView(view, null);
     }
