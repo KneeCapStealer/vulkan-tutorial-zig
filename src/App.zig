@@ -46,6 +46,7 @@ swap_chain_images: []vk.Image,
 swap_chain_image_format: vk.Format,
 swap_chain_extent: vk.Extent2D,
 swap_chain_image_views: []vk.ImageView,
+swap_chain_framebuffers: []vk.Framebuffer,
 
 render_pass: vk.RenderPass,
 pipeline_layout: vk.PipelineLayout,
@@ -74,6 +75,7 @@ pub fn init() App {
         .swap_chain_extent = undefined,
         .swap_chain_image_format = undefined,
         .swap_chain_image_views = undefined,
+        .swap_chain_framebuffers = undefined,
 
         .render_pass = .null_handle,
         .pipeline_layout = .null_handle,
@@ -87,7 +89,7 @@ pub fn run(self: *App) !void {
     try self.initWindow();
     try self.initVulkan();
     try self.mainLoop();
-    try self.cleanup();
+    self.cleanup();
 }
 
 fn initWindow(self: *App) !void {
@@ -149,6 +151,27 @@ fn initVulkan(self: *App) !void {
     try self.createImageViews();
     try self.createRenderPass();
     try self.createGraphicsPipeline();
+    try self.createFramebuffers();
+}
+
+fn createFramebuffers(self: *App) !void {
+    self.swap_chain_framebuffers = try allocator.alloc(vk.Framebuffer, self.swap_chain_image_views.len);
+    for (self.swap_chain_image_views, 0..) |image_view, i| {
+        const attachments: [1]vk.ImageView = .{image_view};
+
+        const framebuffer_info: vk.FramebufferCreateInfo = .{
+            .render_pass = self.render_pass,
+            // Specifies the attachments bound to the renderpass.
+            // When the attachment at position 0 is written to, the image view at position 0 will be used
+            .attachment_count = 1,
+            .p_attachments = &attachments,
+
+            .width = self.swap_chain_extent.width,
+            .height = self.swap_chain_extent.height,
+            .layers = 1,
+        };
+        self.swap_chain_framebuffers[i] = try self.vk_device.createFramebuffer(&framebuffer_info, null);
+    }
 }
 
 fn createRenderPass(self: *App) !void {
@@ -182,8 +205,6 @@ fn createRenderPass(self: *App) !void {
 }
 
 fn createGraphicsPipeline(self: *App) !void {
-    // COMMENT THIS !!!!
-
     const vertex_shader = try std.fs.cwd().openFile("shaders/out/vert.spv", std.fs.File.OpenFlags{
         .lock = .shared,
         .mode = .read_only,
@@ -196,6 +217,7 @@ fn createGraphicsPipeline(self: *App) !void {
     });
     errdefer fragment_shader.close();
 
+    // Shader creation
     const vert_code = try vertex_shader.readToEndAlloc(allocator, std.math.maxInt(usize));
     vertex_shader.close();
     const frag_code = try fragment_shader.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -232,6 +254,7 @@ fn createGraphicsPipeline(self: *App) !void {
 
     const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{ .vertex_binding_description_count = 0, .vertex_attribute_description_count = 0 };
 
+    // We are drawing triangles, not lines, or points
     const input_assembly: vk.PipelineInputAssemblyStateCreateInfo = .{ .topology = .triangle_list, .primitive_restart_enable = vk.FALSE };
 
     const viewport: vk.Viewport = .{
@@ -269,7 +292,10 @@ fn createGraphicsPipeline(self: *App) !void {
     };
 
     const color_blend_attachment: vk.PipelineColorBlendAttachmentState = .{
+        // Use all colors
         .color_write_mask = .{ .a_bit = true, .b_bit = true, .g_bit = true, .r_bit = true },
+
+        // Don't blend colors with previos colors
         .blend_enable = vk.FALSE,
         .src_color_blend_factor = .one,
         .dst_color_blend_factor = .zero,
@@ -280,6 +306,7 @@ fn createGraphicsPipeline(self: *App) !void {
     };
 
     const color_blend: vk.PipelineColorBlendStateCreateInfo = .{
+        // Again don't do color blending
         .logic_op_enable = vk.FALSE,
         .logic_op = .copy,
         .attachment_count = 1,
@@ -292,6 +319,7 @@ fn createGraphicsPipeline(self: *App) !void {
     self.pipeline_layout = try self.vk_device.createPipelineLayout(&pipeline_layout_info, null);
 
     const pipeline_info: vk.GraphicsPipelineCreateInfo = .{
+        // Vertex and fragment shaders
         .stage_count = 2,
         .p_stages = &shader_stages,
         .p_vertex_input_state = &vertex_input_info,
@@ -541,7 +569,11 @@ fn mainLoop(self: *App) !void {
     }
 }
 
-fn cleanup(self: *App) !void {
+fn cleanup(self: *App) void {
+    for (self.swap_chain_framebuffers) |framebuffer| {
+        self.vk_device.destroyFramebuffer(framebuffer, null);
+    }
+
     self.vk_device.destroyPipeline(self.graphics_pipeline, null);
     self.vk_device.destroyPipelineLayout(self.pipeline_layout, null);
     self.vk_device.destroyRenderPass(self.render_pass, null);
