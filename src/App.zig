@@ -52,6 +52,9 @@ render_pass: vk.RenderPass,
 pipeline_layout: vk.PipelineLayout,
 graphics_pipeline: vk.Pipeline,
 
+command_pool: vk.CommandPool,
+command_buffer: vk.CommandBuffer,
+
 pub fn init() App {
     return App{
         .window = undefined,
@@ -80,6 +83,9 @@ pub fn init() App {
         .render_pass = .null_handle,
         .pipeline_layout = .null_handle,
         .graphics_pipeline = .null_handle,
+
+        .command_pool = .null_handle,
+        .command_buffer = .null_handle,
     };
 }
 
@@ -152,6 +158,28 @@ fn initVulkan(self: *App) !void {
     try self.createRenderPass();
     try self.createGraphicsPipeline();
     try self.createFramebuffers();
+    try self.createCommandPool();
+    try self.createCommandBuffer();
+}
+
+fn createCommandBuffer(self: *App) !void {
+    const alloc_info: vk.CommandBufferAllocateInfo = .{
+        .command_pool = self.command_pool,
+        .command_buffer_count = 1,
+        .level = .primary,
+    };
+
+    try self.vk_device.allocateCommandBuffers(&alloc_info, @ptrCast(&self.command_buffer));
+}
+
+fn createCommandPool(self: *App) !void {
+    const queue_families = try self.findQueueFamilies(self.vk_physical);
+    const pool_info: vk.CommandPoolCreateInfo = .{
+        .flags = .{ .reset_command_buffer_bit = true },
+        .queue_family_index = queue_families.graphics_family.?,
+    };
+
+    self.command_pool = try self.vk_device.createCommandPool(&pool_info, null);
 }
 
 fn createFramebuffers(self: *App) !void {
@@ -564,12 +592,14 @@ fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
         // testing cleanup
-        try self.cleanup();
+        self.cleanup();
         std.process.exit(0);
     }
 }
 
 fn cleanup(self: *App) void {
+    self.vk_device.destroyCommandPool(self.command_pool, null);
+
     for (self.swap_chain_framebuffers) |framebuffer| {
         self.vk_device.destroyFramebuffer(framebuffer, null);
     }
