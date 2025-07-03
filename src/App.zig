@@ -162,6 +162,49 @@ fn initVulkan(self: *App) !void {
     try self.createCommandBuffer();
 }
 
+fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index: u32) !void {
+    const cmd_buf: vk.CommandBufferProxy = .init(command_buffer, self.vk_device.wrapper);
+
+    const begin_info: vk.CommandBufferBeginInfo = .{};
+
+    try cmd_buf.beginCommandBuffer(&begin_info);
+
+    const clear_color: vk.ClearValue = .{ .color = .{ .float_32 = .{ 0, 0, 0, 1 } } };
+    const render_pass_info: vk.RenderPassBeginInfo = .{
+        .render_pass = self.render_pass,
+        .framebuffer = self.swap_chain_framebuffers[image_index],
+        .render_area = .{ .extent = self.swap_chain_extent, .offset = .{ .x = 0, .y = 0 } },
+        .clear_value_count = 1,
+        .p_clear_values = @ptrCast(&clear_color),
+    };
+
+    // inline means all commands will be in the primary command buffer
+    cmd_buf.beginRenderPass(&render_pass_info, .@"inline");
+    cmd_buf.bindPipeline(.graphics, self.graphics_pipeline);
+
+    // Viewports and scissors are dynamic, hence we need to set them now
+    const viewport: vk.Viewport = .{
+        .x = 0,
+        .y = 0,
+        .width = @floatFromInt(self.swap_chain_extent.width),
+        .height = @floatFromInt(self.swap_chain_extent.height),
+        .min_depth = 0,
+        .max_depth = 1,
+    };
+    const scissor: vk.Rect2D = .{
+        .offset = .{ .x = 0, .y = 0 },
+        .extent = self.swap_chain_extent,
+    };
+
+    cmd_buf.setViewport(0, 1, @ptrCast(&viewport));
+    cmd_buf.setScissor(0, 1, @ptrCast(&scissor));
+
+    cmd_buf.draw(3, 1, 0, 0);
+    cmd_buf.endRenderPass();
+
+    try cmd_buf.endCommandBuffer();
+}
+
 fn createCommandBuffer(self: *App) !void {
     const alloc_info: vk.CommandBufferAllocateInfo = .{
         .command_pool = self.command_pool,
