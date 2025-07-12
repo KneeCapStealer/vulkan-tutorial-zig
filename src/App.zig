@@ -587,7 +587,7 @@ fn createLogicalDevice(self: *App) !void {
     self.graphics_queue = .init(graphics_queue, &self.device_wrapper);
 
     const present_queue = self.vk_device.getDeviceQueue(indices.present_family.?, 0);
-    self.graphics_queue = .init(present_queue, &self.device_wrapper);
+    self.present_queue = .init(present_queue, &self.device_wrapper);
 }
 
 fn pickPhysicalDevice(self: *App) !void {
@@ -670,6 +670,8 @@ fn mainLoop(self: *App) !void {
         // self.cleanup();
         // std.process.exit(0);
     }
+
+    try self.vk_device.deviceWaitIdle();
 }
 
 fn drawFrame(self: *App) !void {
