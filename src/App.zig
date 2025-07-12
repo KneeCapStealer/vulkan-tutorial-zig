@@ -55,6 +55,10 @@ graphics_pipeline: vk.Pipeline,
 command_pool: vk.CommandPool,
 command_buffer: vk.CommandBuffer,
 
+image_available_semaphore: vk.Semaphore,
+render_finished_semaphore: vk.Semaphore,
+in_flight_fence: vk.Fence,
+
 pub fn init() App {
     return App{
         .window = undefined,
@@ -86,6 +90,10 @@ pub fn init() App {
 
         .command_pool = .null_handle,
         .command_buffer = .null_handle,
+
+        .image_available_semaphore = .null_handle,
+        .render_finished_semaphore = .null_handle,
+        .in_flight_fence = .null_handle,
     };
 }
 
@@ -160,6 +168,16 @@ fn initVulkan(self: *App) !void {
     try self.createFramebuffers();
     try self.createCommandPool();
     try self.createCommandBuffer();
+    try self.createSyncObjects();
+}
+
+fn createSyncObjects(self: *App) !void {
+    const semaphore_info: vk.SemaphoreCreateInfo = .{};
+    const fence_info: vk.FenceCreateInfo = .{ .flags = .{ .signaled_bit = true } };
+
+    self.image_available_semaphore = try self.vk_device.createSemaphore(&semaphore_info, null);
+    self.render_finished_semaphore = try self.vk_device.createSemaphore(&semaphore_info, null);
+    self.in_flight_fence = try self.vk_device.createFence(&fence_info, null);
 }
 
 fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index: u32) !void {
@@ -265,11 +283,23 @@ fn createRenderPass(self: *App) !void {
         .p_color_attachments = @ptrCast(&color_Attachment_ref),
     };
 
+    // Wait for the color attachment output stage is available for write
+    const dependency: vk.SubpassDependency = .{
+        .src_subpass = vk.SUBPASS_EXTERNAL,
+        .dst_subpass = 0,
+        .src_stage_mask = .{ .color_attachment_output_bit = true },
+        .src_access_mask = .{},
+        .dst_stage_mask = .{ .color_attachment_output_bit = true },
+        .dst_access_mask = .{ .color_attachment_write_bit = true },
+    };
+
     const render_pass_info: vk.RenderPassCreateInfo = .{
         .attachment_count = 1,
         .p_attachments = @ptrCast(&color_attachment),
         .subpass_count = 1,
         .p_subpasses = @ptrCast(&subpass),
+        .dependency_count = 1,
+        .p_dependencies = @ptrCast(&dependency),
     };
 
     self.render_pass = try self.vk_device.createRenderPass(&render_pass_info, null);
@@ -634,13 +664,52 @@ fn setupDebugMessenger(self: *App) !void {
 fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
+        try self.drawFrame();
+
         // testing cleanup
-        self.cleanup();
-        std.process.exit(0);
+        // self.cleanup();
+        // std.process.exit(0);
     }
 }
 
+fn drawFrame(self: *App) !void {
+    _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fence), vk.TRUE, std.math.maxInt(u64));
+    _ = try self.vk_device.resetFences(1, @ptrCast(&self.in_flight_fence));
+
+    const image = try self.vk_device.acquireNextImageKHR(self.swap_chain, std.math.maxInt(u64), self.image_available_semaphore, .null_handle);
+
+    try self.vk_device.resetCommandBuffer(self.command_buffer, .{});
+
+    try self.recordCommandBuffer(self.command_buffer, image.image_index);
+
+    const submit_info: vk.SubmitInfo = .{
+        .wait_semaphore_count = 1,
+        .p_wait_semaphores = @ptrCast(&self.image_available_semaphore),
+        .p_wait_dst_stage_mask = @ptrCast(&vk.PipelineStageFlags{ .color_attachment_output_bit = true }),
+        .command_buffer_count = 1,
+        .p_command_buffers = @ptrCast(&self.command_buffer),
+        .signal_semaphore_count = 1,
+        .p_signal_semaphores = @ptrCast(&self.render_finished_semaphore),
+    };
+
+    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fence);
+
+    const present_info: vk.PresentInfoKHR = .{
+        .wait_semaphore_count = 1,
+        .p_wait_semaphores = @ptrCast(&self.render_finished_semaphore),
+        .swapchain_count = 1,
+        .p_swapchains = @ptrCast(&self.swap_chain),
+        .p_image_indices = @ptrCast(&image.image_index),
+    };
+
+    _ = try self.present_queue.presentKHR(&present_info);
+}
+
 fn cleanup(self: *App) void {
+    self.vk_device.destroySemaphore(self.image_available_semaphore, null);
+    self.vk_device.destroySemaphore(self.render_finished_semaphore, null);
+    self.vk_device.destroyFence(self.in_flight_fence, null);
+
     self.vk_device.destroyCommandPool(self.command_pool, null);
 
     for (self.swap_chain_framebuffers) |framebuffer| {

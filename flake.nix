@@ -25,16 +25,16 @@
         { system, pkgs, ... }:
         {
           # Use chaotic overlay
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            overlays = [ inputs.chaotic.overlays.default ];
-          };
+          # _module.args.pkgs = import inputs.nixpkgs {
+          #   inherit system;
+          #   overlays = [ inputs.chaotic.overlays.default ];
+          # };
 
           formatter = pkgs.nixfmt-rfc-style;
 
           devShells.default = pkgs.mkShell {
             packages =
-              with pkgs.vulkanPackages_latest;
+              with pkgs;
               [
                 vulkan-headers
                 vulkan-loader
@@ -48,7 +48,7 @@
 
             shellHook = ''
               mkdir -p ./vulkan
-              cp -f ${pkgs.vulkanPackages_latest.vulkan-headers}/share/vulkan/registry/vk.xml ./vulkan
+              cp -f ${pkgs.vulkan-headers}/share/vulkan/registry/vk.xml ./vulkan
             '';
           };
         };
