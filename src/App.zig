@@ -25,6 +25,8 @@ const device_extensions: []const [*:0]const u8 = &.{
     vk.extensions.khr_swapchain.name,
 };
 
+const max_frames_in_flight = 2;
+
 window: *glfw.Window,
 surface: vk.SurfaceKHR,
 
@@ -53,13 +55,35 @@ pipeline_layout: vk.PipelineLayout,
 graphics_pipeline: vk.Pipeline,
 
 command_pool: vk.CommandPool,
-command_buffer: vk.CommandBuffer,
+command_buffers: [max_frames_in_flight]vk.CommandBuffer,
 
-image_available_semaphore: vk.Semaphore,
-render_finished_semaphore: vk.Semaphore,
-in_flight_fence: vk.Fence,
+image_available_semaphores: [max_frames_in_flight]vk.Semaphore,
+render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
+in_flight_fences: [max_frames_in_flight]vk.Fence,
+
+current_frame: u32,
 
 pub fn init() App {
+    comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
+    inline for (&command_buffers) |*buffer| {
+        buffer.* = .null_handle;
+    }
+
+    comptime var image_available_semaphores: [max_frames_in_flight]vk.Semaphore = undefined;
+    inline for (&image_available_semaphores) |*semaphore| {
+        semaphore.* = .null_handle;
+    }
+
+    comptime var render_finished_semaphores: [max_frames_in_flight]vk.Semaphore = undefined;
+    inline for (&render_finished_semaphores) |*semaphore| {
+        semaphore.* = .null_handle;
+    }
+
+    comptime var in_flight_fences: [max_frames_in_flight]vk.Fence = undefined;
+    inline for (&in_flight_fences) |*fence| {
+        fence.* = .null_handle;
+    }
+
     return App{
         .window = undefined,
         .surface = .null_handle,
@@ -89,11 +113,13 @@ pub fn init() App {
         .graphics_pipeline = .null_handle,
 
         .command_pool = .null_handle,
-        .command_buffer = .null_handle,
+        .command_buffers = command_buffers,
 
-        .image_available_semaphore = .null_handle,
-        .render_finished_semaphore = .null_handle,
-        .in_flight_fence = .null_handle,
+        .image_available_semaphores = image_available_semaphores,
+        .render_finished_semaphores = render_finished_semaphores,
+        .in_flight_fences = in_flight_fences,
+
+        .current_frame = 0,
     };
 }
 
@@ -167,7 +193,7 @@ fn initVulkan(self: *App) !void {
     try self.createGraphicsPipeline();
     try self.createFramebuffers();
     try self.createCommandPool();
-    try self.createCommandBuffer();
+    try self.createCommandBuffers();
     try self.createSyncObjects();
 }
 
@@ -175,9 +201,11 @@ fn createSyncObjects(self: *App) !void {
     const semaphore_info: vk.SemaphoreCreateInfo = .{};
     const fence_info: vk.FenceCreateInfo = .{ .flags = .{ .signaled_bit = true } };
 
-    self.image_available_semaphore = try self.vk_device.createSemaphore(&semaphore_info, null);
-    self.render_finished_semaphore = try self.vk_device.createSemaphore(&semaphore_info, null);
-    self.in_flight_fence = try self.vk_device.createFence(&fence_info, null);
+    inline for (0..max_frames_in_flight) |i| {
+        self.image_available_semaphores[i] = try self.vk_device.createSemaphore(&semaphore_info, null);
+        self.render_finished_semaphores[i] = try self.vk_device.createSemaphore(&semaphore_info, null);
+        self.in_flight_fences[i] = try self.vk_device.createFence(&fence_info, null);
+    }
 }
 
 fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index: u32) !void {
@@ -223,14 +251,14 @@ fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index
     try cmd_buf.endCommandBuffer();
 }
 
-fn createCommandBuffer(self: *App) !void {
+fn createCommandBuffers(self: *App) !void {
     const alloc_info: vk.CommandBufferAllocateInfo = .{
         .command_pool = self.command_pool,
-        .command_buffer_count = 1,
+        .command_buffer_count = max_frames_in_flight,
         .level = .primary,
     };
 
-    try self.vk_device.allocateCommandBuffers(&alloc_info, @ptrCast(&self.command_buffer));
+    try self.vk_device.allocateCommandBuffers(&alloc_info, &self.command_buffers);
 }
 
 fn createCommandPool(self: *App) !void {
@@ -665,52 +693,55 @@ fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
         try self.drawFrame();
-
-        // testing cleanup
-        // self.cleanup();
-        // std.process.exit(0);
     }
 
     try self.vk_device.deviceWaitIdle();
 }
 
 fn drawFrame(self: *App) !void {
-    _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fence), vk.TRUE, std.math.maxInt(u64));
-    _ = try self.vk_device.resetFences(1, @ptrCast(&self.in_flight_fence));
+    _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
+    _ = try self.vk_device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
-    const image = try self.vk_device.acquireNextImageKHR(self.swap_chain, std.math.maxInt(u64), self.image_available_semaphore, .null_handle);
+    // 'render_finished_semaphores'give validation errors because the semaphores might still be in use when rendering.
+    // This isn't the case, but in more complex scenarios this could easily happen.
+    // Therefore each image *should* have it's own semaphore for this.
+    // But the tutorial doesn't do that so I'm not gonna bother....
+    const image = try self.vk_device.acquireNextImageKHR(self.swap_chain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
 
-    try self.vk_device.resetCommandBuffer(self.command_buffer, .{});
+    try self.vk_device.resetCommandBuffer(self.command_buffers[self.current_frame], .{});
 
-    try self.recordCommandBuffer(self.command_buffer, image.image_index);
+    try self.recordCommandBuffer(self.command_buffers[self.current_frame], image.image_index);
 
     const submit_info: vk.SubmitInfo = .{
         .wait_semaphore_count = 1,
-        .p_wait_semaphores = @ptrCast(&self.image_available_semaphore),
+        .p_wait_semaphores = @ptrCast(&self.image_available_semaphores[self.current_frame]),
         .p_wait_dst_stage_mask = @ptrCast(&vk.PipelineStageFlags{ .color_attachment_output_bit = true }),
         .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast(&self.command_buffer),
+        .p_command_buffers = @ptrCast(&self.command_buffers[self.current_frame]),
         .signal_semaphore_count = 1,
-        .p_signal_semaphores = @ptrCast(&self.render_finished_semaphore),
+        .p_signal_semaphores = @ptrCast(&self.render_finished_semaphores[self.current_frame]),
     };
 
-    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fence);
+    try self.graphics_queue.submit(1, @ptrCast(&submit_info), self.in_flight_fences[self.current_frame]);
 
     const present_info: vk.PresentInfoKHR = .{
         .wait_semaphore_count = 1,
-        .p_wait_semaphores = @ptrCast(&self.render_finished_semaphore),
+        .p_wait_semaphores = @ptrCast(&self.render_finished_semaphores[self.current_frame]),
         .swapchain_count = 1,
         .p_swapchains = @ptrCast(&self.swap_chain),
         .p_image_indices = @ptrCast(&image.image_index),
     };
 
     _ = try self.present_queue.presentKHR(&present_info);
+    self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
 
 fn cleanup(self: *App) void {
-    self.vk_device.destroySemaphore(self.image_available_semaphore, null);
-    self.vk_device.destroySemaphore(self.render_finished_semaphore, null);
-    self.vk_device.destroyFence(self.in_flight_fence, null);
+    inline for (0..max_frames_in_flight) |i| {
+        self.vk_device.destroySemaphore(self.image_available_semaphores[i], null);
+        self.vk_device.destroySemaphore(self.render_finished_semaphores[i], null);
+        self.vk_device.destroyFence(self.in_flight_fences[i], null);
+    }
 
     self.vk_device.destroyCommandPool(self.command_pool, null);
 
