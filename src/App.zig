@@ -702,7 +702,7 @@ fn drawFrame(self: *App) !void {
     _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
     _ = try self.vk_device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
-    // 'render_finished_semaphores'give validation errors because the semaphores might still be in use when rendering.
+    // 'render_finished_semaphores' give validation errors because the semaphores might still be in use when rendering.
     // This isn't the case, but in more complex scenarios this could easily happen.
     // Therefore each image *should* have it's own semaphore for this.
     // But the tutorial doesn't do that so I'm not gonna bother....
