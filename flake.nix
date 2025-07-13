@@ -25,16 +25,16 @@
         { system, pkgs, ... }:
         {
           # Use chaotic overlay
-          # _module.args.pkgs = import inputs.nixpkgs {
-          #   inherit system;
-          #   overlays = [ inputs.chaotic.overlays.default ];
-          # };
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = [ inputs.chaotic.overlays.default ];
+          };
 
           formatter = pkgs.nixfmt-rfc-style;
 
           devShells.default = pkgs.mkShell {
             packages =
-              with pkgs;
+              with pkgs.vulkanPackages_latest;
               [
                 vulkan-headers
                 vulkan-loader
@@ -52,7 +52,7 @@
               cp -f ${pkgs.vulkan-headers}/share/vulkan/registry/vk.xml ./vulkan
 
               VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
-              VK_LAYER_SETTINGS_PATH=./vk_layer_settings.txt
+              VK_LAYER_SETTINGS_PATH="$(pwd)./vk_layer_settings.txt"
 
               echo 'khronos_validation.enables = VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED' > ./vk_layer_settings.txt
             '';
