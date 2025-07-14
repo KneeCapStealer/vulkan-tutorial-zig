@@ -63,6 +63,8 @@ in_flight_fences: [max_frames_in_flight]vk.Fence,
 
 current_frame: u32,
 
+framebuffer_resized: bool,
+
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
     inline for (&command_buffers) |*buffer| {
@@ -120,6 +122,8 @@ pub fn init() App {
         .in_flight_fences = in_flight_fences,
 
         .current_frame = 0,
+
+        .framebuffer_resized = false,
     };
 }
 
@@ -134,9 +138,16 @@ pub fn run(self: *App) !void {
 
 fn initWindow(self: *App) !void {
     glfw.windowHint(glfw.ClientAPI, glfw.NoAPI);
-    glfw.windowHint(glfw.Resizable, 0);
 
     self.window = try glfw.createWindow(width, height, "Vulkan", null, null);
+    glfw.setWindowUserPointer(self.window, self);
+    _ = glfw.setFramebufferSizeCallback(self.window, framebufferResizeCallback);
+}
+
+fn framebufferResizeCallback(window: *glfw.Window, _: c_int, _: c_int) callconv(.C) void {
+    const self: *App = @alignCast(@ptrCast(glfw.getWindowUserPointer(window)));
+
+    self.framebuffer_resized = true;
 }
 
 fn createInstance(self: *App) !void {
@@ -506,6 +517,37 @@ fn createImageViews(self: *App) !void {
     }
 }
 
+fn recreateSwapChain(self: *App) !void {
+    // If the windows size is 0 then it is minimized and we pause the app
+    var new_width: c_int = 0;
+    var new_height: c_int = 0;
+    glfw.getFramebufferSize(self.window, &new_width, &new_height);
+    while (new_height == 0 or new_width == 0) {
+        glfw.getFramebufferSize(self.window, &new_width, &new_height);
+        glfw.waitEvents();
+    }
+
+    try self.vk_device.deviceWaitIdle();
+
+    try self.cleanupSwapChain();
+
+    try self.createSwapChain();
+    try self.createImageViews();
+    try self.createFramebuffers();
+}
+
+fn cleanupSwapChain(self: *App) !void {
+    for (self.swap_chain_framebuffers) |framebuffer| {
+        self.vk_device.destroyFramebuffer(framebuffer, null);
+    }
+
+    for (self.swap_chain_image_views) |view| {
+        self.vk_device.destroyImageView(view, null);
+    }
+
+    self.vk_device.destroySwapchainKHR(self.swap_chain, null);
+}
+
 fn createSwapChain(self: *App) !void {
     const swap_chain_details = try self.querySwapChainSupport(self.vk_physical);
 
@@ -700,13 +742,23 @@ fn mainLoop(self: *App) !void {
 
 fn drawFrame(self: *App) !void {
     _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
-    _ = try self.vk_device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
     // 'render_finished_semaphores' give validation errors because the semaphores might still be in use when rendering.
     // This isn't the case, but in more complex scenarios this could easily happen.
     // Therefore each image *should* have it's own semaphore for this.
     // But the tutorial doesn't do that so I'm not gonna bother....
-    const image = try self.vk_device.acquireNextImageKHR(self.swap_chain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle);
+    const image = self.vk_device.acquireNextImageKHR(self.swap_chain, std.math.maxInt(u64), self.image_available_semaphores[self.current_frame], .null_handle) catch |err| {
+        // If the swapchain is out of date, recreate it. (for example when resizing)
+        if (err == error.OutOfDateKHR) {
+            try self.recreateSwapChain();
+            return;
+        }
+        return err;
+    };
+
+    // Only reset the fences after we are sure we will do work
+    // If fences are reset and we recreate swapchain and return early, then the program will deadlock.
+    _ = try self.vk_device.resetFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]));
 
     try self.vk_device.resetCommandBuffer(self.command_buffers[self.current_frame], .{});
 
@@ -732,11 +784,29 @@ fn drawFrame(self: *App) !void {
         .p_image_indices = @ptrCast(&image.image_index),
     };
 
-    _ = try self.present_queue.presentKHR(&present_info);
+    const result = self.present_queue.presentKHR(&present_info) catch |err| blk: {
+        if (err == error.OutOfDateKHR) {
+            break :blk vk.Result.error_out_of_date_khr;
+        } else {
+            return err;
+        }
+    };
+
+    if (result == .suboptimal_khr or result == .error_out_of_date_khr or self.framebuffer_resized) {
+        self.framebuffer_resized = false;
+        try self.recreateSwapChain();
+    }
+
     self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
 
 fn cleanup(self: *App) void {
+    try self.cleanupSwapChain();
+
+    self.vk_device.destroyPipeline(self.graphics_pipeline, null);
+    self.vk_device.destroyPipelineLayout(self.pipeline_layout, null);
+    self.vk_device.destroyRenderPass(self.render_pass, null);
+
     inline for (0..max_frames_in_flight) |i| {
         self.vk_device.destroySemaphore(self.image_available_semaphores[i], null);
         self.vk_device.destroySemaphore(self.render_finished_semaphores[i], null);
@@ -745,19 +815,6 @@ fn cleanup(self: *App) void {
 
     self.vk_device.destroyCommandPool(self.command_pool, null);
 
-    for (self.swap_chain_framebuffers) |framebuffer| {
-        self.vk_device.destroyFramebuffer(framebuffer, null);
-    }
-
-    self.vk_device.destroyPipeline(self.graphics_pipeline, null);
-    self.vk_device.destroyPipelineLayout(self.pipeline_layout, null);
-    self.vk_device.destroyRenderPass(self.render_pass, null);
-
-    for (self.swap_chain_image_views) |view| {
-        self.vk_device.destroyImageView(view, null);
-    }
-
-    self.vk_device.destroySwapchainKHR(self.swap_chain, null);
     self.vk_device.destroyDevice(null);
 
     if (enable_val_layers) {
