@@ -6,6 +6,39 @@ const glfw = @import("glfw");
 const vk = @import("vulkan");
 const set = @import("set");
 
+const math = @import("math.zig");
+const Vec2 = math.vec2;
+const Vec3 = math.vec3;
+
+const Vertex = struct {
+    pos: Vec2,
+    color: Vec3,
+
+    fn getBindingDescription() vk.VertexInputBindingDescription {
+        const binding_description: vk.VertexInputBindingDescription = .{
+            .binding = 0,
+            .stride = @sizeOf(@This()),
+            .input_rate = .vertex,
+        };
+
+        return binding_description;
+    }
+
+    fn getAttributeDescriptions() [2]vk.VertexInputAttributeDescription {
+        return [2]vk.VertexInputAttributeDescription{ .{
+            .binding = 0,
+            .location = 0,
+            .format = .r32g32_sfloat,
+            .offset = @offsetOf(@This(), "pos"),
+        }, .{
+            .binding = 0,
+            .location = 1,
+            .format = .r32g32b32_sfloat,
+            .offset = @offsetOf(@This(), "color"),
+        } };
+    }
+};
+
 const App = @This();
 
 var debugAllocator = std.heap.DebugAllocator(.{}){};
@@ -392,7 +425,14 @@ fn createGraphicsPipeline(self: *App) !void {
         .p_dynamic_states = dynamic_states.ptr,
     };
 
-    const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{ .vertex_binding_description_count = 0, .vertex_attribute_description_count = 0 };
+    const vertex_binding_desc = Vertex.getBindingDescription();
+    const vertex_attr_desc = Vertex.getAttributeDescriptions();
+    const vertex_input_info: vk.PipelineVertexInputStateCreateInfo = .{
+        .vertex_binding_description_count = 1,
+        .p_vertex_binding_descriptions = @ptrCast(&vertex_binding_desc),
+        .vertex_attribute_description_count = @intCast(vertex_attr_desc.len),
+        .p_vertex_attribute_descriptions = &vertex_attr_desc,
+    };
 
     // We are drawing triangles, not lines, or points
     const input_assembly: vk.PipelineInputAssemblyStateCreateInfo = .{ .topology = .triangle_list, .primitive_restart_enable = vk.FALSE };
