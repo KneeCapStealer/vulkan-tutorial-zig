@@ -7,8 +7,8 @@ const vk = @import("vulkan");
 const set = @import("set");
 
 const math = @import("math.zig");
-const Vec2 = math.vec2;
-const Vec3 = math.vec3;
+const Vec2 = math.Vec2;
+const Vec3 = math.Vec3;
 
 const Vertex = struct {
     pos: Vec2,
@@ -17,7 +17,7 @@ const Vertex = struct {
     fn getBindingDescription() vk.VertexInputBindingDescription {
         const binding_description: vk.VertexInputBindingDescription = .{
             .binding = 0,
-            .stride = @sizeOf(@This()),
+            .stride = @sizeOf(Vertex),
             .input_rate = .vertex,
         };
 
@@ -29,12 +29,12 @@ const Vertex = struct {
             .binding = 0,
             .location = 0,
             .format = .r32g32_sfloat,
-            .offset = @offsetOf(@This(), "pos"),
+            .offset = @offsetOf(Vertex, "pos"),
         }, .{
             .binding = 0,
             .location = 1,
             .format = .r32g32b32_sfloat,
-            .offset = @offsetOf(@This(), "color"),
+            .offset = @offsetOf(Vertex, "color"),
         } };
     }
 };
@@ -98,6 +98,10 @@ current_frame: u32,
 
 framebuffer_resized: bool,
 
+verticies: []Vertex,
+vertex_buffer: vk.Buffer,
+vertex_buffer_memory: vk.DeviceMemory,
+
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
     inline for (&command_buffers) |*buffer| {
@@ -118,6 +122,15 @@ pub fn init() App {
     inline for (&in_flight_fences) |*fence| {
         fence.* = .null_handle;
     }
+
+    const verticies = [_]Vertex{
+        Vertex{ .pos = .{ .x = 0, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 } },
+        Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
+        Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 } },
+    };
+
+    const slice = allocator.alloc(Vertex, verticies.len) catch @panic("bruh");
+    std.mem.copyBackwards(Vertex, slice, &verticies);
 
     return App{
         .window = undefined,
@@ -157,6 +170,10 @@ pub fn init() App {
         .current_frame = 0,
 
         .framebuffer_resized = false,
+
+        .verticies = slice,
+        .vertex_buffer = .null_handle,
+        .vertex_buffer_memory = .null_handle,
     };
 }
 
@@ -237,8 +254,51 @@ fn initVulkan(self: *App) !void {
     try self.createGraphicsPipeline();
     try self.createFramebuffers();
     try self.createCommandPool();
+    try self.createVertexBuffer();
     try self.createCommandBuffers();
     try self.createSyncObjects();
+}
+
+fn createVertexBuffer(self: *App) !void {
+    const buffer_info: vk.BufferCreateInfo = .{
+        .size = @sizeOf(Vertex) * self.verticies.len,
+        .usage = .{ .vertex_buffer_bit = true },
+        .sharing_mode = .exclusive,
+    };
+
+    self.vertex_buffer = try self.vk_device.createBuffer(&buffer_info, null);
+
+    const mem_req = self.vk_device.getBufferMemoryRequirements(self.vertex_buffer);
+    const alloc_info: vk.MemoryAllocateInfo = .{
+        .allocation_size = mem_req.size,
+        .memory_type_index = try self.findMemoryType(mem_req.memory_type_bits, vk.MemoryPropertyFlags{
+            // Make sure we can read from/write to memory
+            .host_visible_bit = true,
+            // The memory is automatically flushed to the GPU
+            .host_coherent_bit = true,
+        }),
+    };
+
+    self.vertex_buffer_memory = try self.vk_device.allocateMemory(&alloc_info, null);
+    try self.vk_device.bindBufferMemory(self.vertex_buffer, self.vertex_buffer_memory, 0);
+
+    const data = try self.vk_device.mapMemory(self.vertex_buffer_memory, 0, buffer_info.size, .{});
+    var mapped: @TypeOf(self.verticies) = undefined;
+    mapped.len = self.verticies.len;
+    mapped.ptr = @alignCast(@ptrCast(data));
+    @memcpy(mapped, self.verticies);
+    self.vk_device.unmapMemory(self.vertex_buffer_memory);
+}
+
+fn findMemoryType(self: *App, type_filter: u32, properties: vk.MemoryPropertyFlags) error{NoSuitableMemoryType}!u32 {
+    const mem_properties = self.vk_instance.getPhysicalDeviceMemoryProperties(self.vk_physical);
+    for (0..mem_properties.memory_type_count) |i| {
+        if ((type_filter & (@as(u32, 1) << @intCast(i))) != 0 and mem_properties.memory_types[i].property_flags.contains(properties)) {
+            return @intCast(i);
+        }
+    }
+
+    return error.NoSuitableMemoryType;
 }
 
 fn createSyncObjects(self: *App) !void {
@@ -289,7 +349,11 @@ fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index
     cmd_buf.setViewport(0, 1, @ptrCast(&viewport));
     cmd_buf.setScissor(0, 1, @ptrCast(&scissor));
 
-    cmd_buf.draw(3, 1, 0, 0);
+    const vertex_buffers = [_]vk.Buffer{self.vertex_buffer};
+    const offsets = [_]vk.DeviceSize{0};
+    cmd_buf.bindVertexBuffers(0, 1, &vertex_buffers, &offsets);
+
+    cmd_buf.draw(@intCast(self.verticies.len), 1, 0, 0);
     cmd_buf.endRenderPass();
 
     try cmd_buf.endCommandBuffer();
@@ -842,6 +906,10 @@ fn drawFrame(self: *App) !void {
 
 fn cleanup(self: *App) void {
     try self.cleanupSwapChain();
+
+    self.vk_device.destroyBuffer(self.vertex_buffer, null);
+    self.vk_device.freeMemory(self.vertex_buffer_memory, null);
+    allocator.free(self.verticies);
 
     self.vk_device.destroyPipeline(self.graphics_pipeline, null);
     self.vk_device.destroyPipelineLayout(self.pipeline_layout, null);
