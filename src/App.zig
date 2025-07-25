@@ -106,6 +106,10 @@ verticies: []const Vertex,
 vertex_buffer: vk.Buffer,
 vertex_buffer_memory: vk.DeviceMemory,
 
+indices: []const u32,
+index_buffer: vk.Buffer,
+index_buffer_memory: vk.DeviceMemory,
+
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
     inline for (&command_buffers) |*buffer| {
@@ -170,12 +174,20 @@ pub fn init() App {
         .framebuffer_resized = false,
 
         .verticies = &.{
-            Vertex{ .pos = .{ .x = 0, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
-            Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 } },
+            Vertex{ .pos = .{ .x = -0.5, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 } },
+            Vertex{ .pos = .{ .x = 0.5, .y = -0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
+            Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 } },
+            Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
         },
         .vertex_buffer = .null_handle,
         .vertex_buffer_memory = .null_handle,
+
+        .indices = &.{
+            0, 1, 2,
+            0, 2, 3,
+        },
+        .index_buffer = .null_handle,
+        .index_buffer_memory = .null_handle,
     };
 }
 
@@ -257,8 +269,37 @@ fn initVulkan(self: *App) !void {
     try self.createFramebuffers();
     try self.createCommandPool();
     try self.createVertexBuffer();
+    try self.createIndexBuffer();
     try self.createCommandBuffers();
     try self.createSyncObjects();
+}
+
+fn createIndexBuffer(self: *App) !void {
+    const buffer_size: vk.DeviceSize = @sizeOf(u32) * self.indices.len;
+
+    // Create host visible buffer
+    const staging_buffer, const staging_buffer_memory = try self.createBuffer(buffer_size, .{ .transfer_src_bit = true }, .{
+        .host_visible_bit = true,
+        .host_coherent_bit = true,
+    });
+
+    // Copy data to host visisble buffer
+    const data = try self.vk_device.mapMemory(staging_buffer_memory, 0, buffer_size, .{});
+    var mapped: []u32 = undefined;
+    mapped.len = self.indices.len;
+    mapped.ptr = @ptrCast(@alignCast(data));
+    @memcpy(mapped, self.indices);
+    self.vk_device.unmapMemory(staging_buffer_memory);
+
+    // Create a device local buffer and copy data
+    self.index_buffer, self.index_buffer_memory = try self.createBuffer(buffer_size, .{
+        .index_buffer_bit = true,
+        .transfer_dst_bit = true,
+    }, .{ .device_local_bit = true });
+    try self.copyBuffer(staging_buffer, self.index_buffer, buffer_size);
+
+    self.vk_device.destroyBuffer(staging_buffer, null);
+    self.vk_device.freeMemory(staging_buffer_memory, null);
 }
 
 fn createVertexBuffer(self: *App) !void {
@@ -275,7 +316,10 @@ fn createVertexBuffer(self: *App) !void {
     @memcpy(mapped, self.verticies);
     self.vk_device.unmapMemory(staging_buffer_memory);
 
-    self.vertex_buffer, self.vertex_buffer_memory = try self.createBuffer(buffer_size, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .{ .device_local_bit = true });
+    self.vertex_buffer, self.vertex_buffer_memory = try self.createBuffer(buffer_size, .{
+        .vertex_buffer_bit = true,
+        .transfer_dst_bit = true,
+    }, .{ .device_local_bit = true });
 
     try self.copyBuffer(staging_buffer, self.vertex_buffer, buffer_size);
 
@@ -404,10 +448,15 @@ fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index
     cmd_buf.setViewport(0, 1, @ptrCast(&viewport));
     cmd_buf.setScissor(0, 1, @ptrCast(&scissor));
 
+    // You can split color and position data into 2 diffrent buffers
+    // And bind them all in different locations.
+    // It can on some hardware improve performance to split up the position from texture map locations and normals.
     const vertex_buffers = [_]vk.Buffer{self.vertex_buffer};
     const offsets = [_]vk.DeviceSize{0};
     cmd_buf.bindVertexBuffers(0, 1, &vertex_buffers, &offsets);
+    cmd_buf.bindIndexBuffer(self.index_buffer, 0, .uint32);
 
+    cmd_buf.drawIndexed(@intCast(self.indices.len), 1, 0, 0, 0);
     cmd_buf.draw(@intCast(self.verticies.len), 1, 0, 0);
     cmd_buf.endRenderPass();
 
@@ -970,6 +1019,9 @@ fn drawFrame(self: *App) !void {
 
 fn cleanup(self: *App) void {
     try self.cleanupSwapChain();
+
+    self.vk_device.destroyBuffer(self.index_buffer, null);
+    self.vk_device.freeMemory(self.index_buffer_memory, null);
 
     self.vk_device.destroyBuffer(self.vertex_buffer, null);
     self.vk_device.freeMemory(self.vertex_buffer_memory, null);
