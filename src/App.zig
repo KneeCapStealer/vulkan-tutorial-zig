@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
+const meta = std.meta;
 const builtin = @import("builtin");
 
 const glfw = @import("glfw");
@@ -73,6 +74,7 @@ vk_device: vk.DeviceProxy,
 
 graphics_queue: vk.QueueProxy,
 present_queue: vk.QueueProxy,
+transfer_queue: vk.QueueProxy,
 
 debug_messenger: vk.DebugUtilsMessengerEXT,
 
@@ -90,6 +92,8 @@ graphics_pipeline: vk.Pipeline,
 command_pool: vk.CommandPool,
 command_buffers: [max_frames_in_flight]vk.CommandBuffer,
 
+transfer_command_pool: vk.CommandPool,
+
 image_available_semaphores: [max_frames_in_flight]vk.Semaphore,
 render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
 in_flight_fences: [max_frames_in_flight]vk.Fence,
@@ -98,7 +102,7 @@ current_frame: u32,
 
 framebuffer_resized: bool,
 
-verticies: []Vertex,
+verticies: []const Vertex,
 vertex_buffer: vk.Buffer,
 vertex_buffer_memory: vk.DeviceMemory,
 
@@ -123,15 +127,6 @@ pub fn init() App {
         fence.* = .null_handle;
     }
 
-    const verticies = [_]Vertex{
-        Vertex{ .pos = .{ .x = 0, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 } },
-        Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
-        Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 } },
-    };
-
-    const slice = allocator.alloc(Vertex, verticies.len) catch @panic("bruh");
-    std.mem.copyBackwards(Vertex, slice, &verticies);
-
     return App{
         .window = undefined,
         .surface = .null_handle,
@@ -146,6 +141,7 @@ pub fn init() App {
 
         .graphics_queue = undefined,
         .present_queue = undefined,
+        .transfer_queue = undefined,
 
         .debug_messenger = .null_handle,
 
@@ -163,6 +159,8 @@ pub fn init() App {
         .command_pool = .null_handle,
         .command_buffers = command_buffers,
 
+        .transfer_command_pool = .null_handle,
+
         .image_available_semaphores = image_available_semaphores,
         .render_finished_semaphores = render_finished_semaphores,
         .in_flight_fences = in_flight_fences,
@@ -171,7 +169,11 @@ pub fn init() App {
 
         .framebuffer_resized = false,
 
-        .verticies = slice,
+        .verticies = &.{
+            Vertex{ .pos = .{ .x = 0, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 } },
+            Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
+            Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 } },
+        },
         .vertex_buffer = .null_handle,
         .vertex_buffer_memory = .null_handle,
     };
@@ -260,34 +262,87 @@ fn initVulkan(self: *App) !void {
 }
 
 fn createVertexBuffer(self: *App) !void {
-    const buffer_info: vk.BufferCreateInfo = .{
-        .size = @sizeOf(Vertex) * self.verticies.len,
-        .usage = .{ .vertex_buffer_bit = true },
-        .sharing_mode = .exclusive,
+    const buffer_size: vk.DeviceSize = @sizeOf(Vertex) * self.verticies.len;
+    const staging_buffer, const staging_buffer_memory = try self.createBuffer(buffer_size, .{ .transfer_src_bit = true }, .{
+        .host_visible_bit = true,
+        .host_coherent_bit = true,
+    });
+
+    const data = try self.vk_device.mapMemory(staging_buffer_memory, 0, buffer_size, .{});
+    var mapped: []Vertex = undefined;
+    mapped.len = self.verticies.len;
+    mapped.ptr = @ptrCast(@alignCast(data));
+    @memcpy(mapped, self.verticies);
+    self.vk_device.unmapMemory(staging_buffer_memory);
+
+    self.vertex_buffer, self.vertex_buffer_memory = try self.createBuffer(buffer_size, .{ .vertex_buffer_bit = true, .transfer_dst_bit = true }, .{ .device_local_bit = true });
+
+    try self.copyBuffer(staging_buffer, self.vertex_buffer, buffer_size);
+
+    self.vk_device.destroyBuffer(staging_buffer, null);
+    self.vk_device.freeMemory(staging_buffer_memory, null);
+}
+
+fn copyBuffer(self: *App, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) !void {
+    const alloc_info: vk.CommandBufferAllocateInfo = .{
+        .command_pool = self.transfer_command_pool,
+        .command_buffer_count = 1,
+        .level = .primary,
     };
 
-    self.vertex_buffer = try self.vk_device.createBuffer(&buffer_info, null);
+    var command_buffer: vk.CommandBuffer = undefined;
+    try self.vk_device.allocateCommandBuffers(&alloc_info, @ptrCast(&command_buffer));
 
-    const mem_req = self.vk_device.getBufferMemoryRequirements(self.vertex_buffer);
+    const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
+
+    const begin_info: vk.CommandBufferBeginInfo = .{ .flags = .{
+        .one_time_submit_bit = true,
+    } };
+    try cmd.beginCommandBuffer(&begin_info);
+
+    const copy_region: vk.BufferCopy = .{
+        .dst_offset = 0,
+        .src_offset = 0,
+        .size = size,
+    };
+    cmd.copyBuffer(src, dst, 1, @ptrCast(&copy_region));
+
+    try cmd.endCommandBuffer();
+
+    const submit_info: vk.SubmitInfo = .{
+        .command_buffer_count = 1,
+        .p_command_buffers = @ptrCast(&command_buffer),
+    };
+    try self.transfer_queue.submit(1, @ptrCast(&submit_info), .null_handle);
+    try self.transfer_queue.waitIdle();
+
+    self.vk_device.freeCommandBuffers(self.transfer_command_pool, 1, @ptrCast(&command_buffer));
+}
+
+fn createBuffer(self: *App, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) !meta.Tuple(&.{ vk.Buffer, vk.DeviceMemory }) {
+    const indices = try self.findQueueFamilies(self.vk_physical);
+    const multiple_queues = indices.graphics_family == indices.transfer_family;
+    const buffer_info: vk.BufferCreateInfo = .{
+        .size = size,
+        .usage = usage,
+        .sharing_mode = if (multiple_queues) .concurrent else .exclusive,
+        .queue_family_index_count = if (multiple_queues) 1 else 2,
+        .p_queue_family_indices = if (multiple_queues) &.{indices.graphics_family.?} else &.{ indices.graphics_family.?, indices.transfer_family.? },
+    };
+
+    const buffer = try self.vk_device.createBuffer(&buffer_info, null);
+
+    const mem_req = self.vk_device.getBufferMemoryRequirements(buffer);
     const alloc_info: vk.MemoryAllocateInfo = .{
         .allocation_size = mem_req.size,
-        .memory_type_index = try self.findMemoryType(mem_req.memory_type_bits, vk.MemoryPropertyFlags{
-            // Make sure we can read from/write to memory
-            .host_visible_bit = true,
-            // The memory is automatically flushed to the GPU
-            .host_coherent_bit = true,
-        }),
+        .memory_type_index = try self.findMemoryType(mem_req.memory_type_bits, properties),
     };
 
-    self.vertex_buffer_memory = try self.vk_device.allocateMemory(&alloc_info, null);
-    try self.vk_device.bindBufferMemory(self.vertex_buffer, self.vertex_buffer_memory, 0);
+    const buffer_memory = try self.vk_device.allocateMemory(&alloc_info, null);
 
-    const data = try self.vk_device.mapMemory(self.vertex_buffer_memory, 0, buffer_info.size, .{});
-    var mapped: @TypeOf(self.verticies) = undefined;
-    mapped.len = self.verticies.len;
-    mapped.ptr = @alignCast(@ptrCast(data));
-    @memcpy(mapped, self.verticies);
-    self.vk_device.unmapMemory(self.vertex_buffer_memory);
+    try self.vk_device.bindBufferMemory(buffer, buffer_memory, 0);
+
+    return .{ buffer, buffer_memory };
 }
 
 fn findMemoryType(self: *App, type_filter: u32, properties: vk.MemoryPropertyFlags) error{NoSuitableMemoryType}!u32 {
@@ -365,18 +420,23 @@ fn createCommandBuffers(self: *App) !void {
         .command_buffer_count = max_frames_in_flight,
         .level = .primary,
     };
-
     try self.vk_device.allocateCommandBuffers(&alloc_info, &self.command_buffers);
 }
 
 fn createCommandPool(self: *App) !void {
     const queue_families = try self.findQueueFamilies(self.vk_physical);
+
     const pool_info: vk.CommandPoolCreateInfo = .{
         .flags = .{ .reset_command_buffer_bit = true },
         .queue_family_index = queue_families.graphics_family.?,
     };
-
     self.command_pool = try self.vk_device.createCommandPool(&pool_info, null);
+
+    const transfer_pool_info: vk.CommandPoolCreateInfo = .{
+        .flags = .{ .reset_command_buffer_bit = true },
+        .queue_family_index = queue_families.transfer_family.?,
+    };
+    self.transfer_command_pool = try self.vk_device.createCommandPool(&transfer_pool_info, null);
 }
 
 fn createFramebuffers(self: *App) !void {
@@ -723,17 +783,17 @@ fn createLogicalDevice(self: *App) !void {
         return error.FailedToFindQueueFamilies;
     }
 
-    var unique_queue_families: set.Set(u32) = try .initCapacity(allocator, 1);
-    _ = try unique_queue_families.appendSlice(&.{ indices.present_family.?, indices.graphics_family.? });
+    var unique_queue_families: set.Set(u32) = .init(allocator);
+    defer unique_queue_families.deinit();
+    _ = try unique_queue_families.appendSlice(&.{ indices.present_family.?, indices.graphics_family.?, indices.transfer_family.? });
 
     var iter = unique_queue_families.iterator();
-    var queue_create_infos: std.ArrayList(vk.DeviceQueueCreateInfo) = try .initCapacity(allocator, 1);
+    var queue_create_infos: std.ArrayList(vk.DeviceQueueCreateInfo) = .init(allocator);
     defer queue_create_infos.deinit();
 
     const queue_prio: f32 = 1.0;
 
-    var i: usize = 0;
-    while (iter.next()) |queue_family| : (i += 1) {
+    while (iter.next()) |queue_family| {
         try queue_create_infos.append(vk.DeviceQueueCreateInfo{
             .queue_family_index = queue_family.*,
             .queue_count = 1,
@@ -762,6 +822,10 @@ fn createLogicalDevice(self: *App) !void {
 
     const present_queue = self.vk_device.getDeviceQueue(indices.present_family.?, 0);
     self.present_queue = .init(present_queue, &self.device_wrapper);
+
+    const transfer_queue_index: u32 = if (indices.graphics_family.? == indices.transfer_family.?) 1 else 0;
+    const transfer_queue = self.vk_device.getDeviceQueue(indices.transfer_family.?, transfer_queue_index);
+    self.transfer_queue = .init(transfer_queue, &self.device_wrapper);
 }
 
 fn pickPhysicalDevice(self: *App) !void {
@@ -909,7 +973,6 @@ fn cleanup(self: *App) void {
 
     self.vk_device.destroyBuffer(self.vertex_buffer, null);
     self.vk_device.freeMemory(self.vertex_buffer_memory, null);
-    allocator.free(self.verticies);
 
     self.vk_device.destroyPipeline(self.graphics_pipeline, null);
     self.vk_device.destroyPipelineLayout(self.pipeline_layout, null);
@@ -922,6 +985,7 @@ fn cleanup(self: *App) void {
     }
 
     self.vk_device.destroyCommandPool(self.command_pool, null);
+    self.vk_device.destroyCommandPool(self.transfer_command_pool, null);
 
     self.vk_device.destroyDevice(null);
 
@@ -972,29 +1036,42 @@ fn getRequiredExtensions() ![]const [*:0]const u8 {
 const QueueFamilyIndices = struct {
     graphics_family: ?u32 = null,
     present_family: ?u32 = null,
+    transfer_family: ?u32 = null,
 
     pub fn isComplete(self: QueueFamilyIndices) bool {
-        return self.graphics_family != null and self.present_family != null;
+        const fields = comptime std.meta.fieldNames(QueueFamilyIndices);
+        inline for (fields) |field| {
+            if (@field(self, field) == null) {
+                return false;
+            }
+        }
+
+        // If all fields have a value
+        return true;
     }
 };
 
-fn findQueueFamilies(self: *App, device: vk.PhysicalDevice) !QueueFamilyIndices {
+fn findQueueFamilies(self: *const App, device: vk.PhysicalDevice) !QueueFamilyIndices {
     var indices: QueueFamilyIndices = .{};
 
     const queue_families = try self.vk_instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
     for (queue_families, 0..) |queue_family, i| {
         const index: u32 = @intCast(i);
 
-        if (queue_family.queue_flags.graphics_bit) {
+        if (queue_family.queue_flags.graphics_bit and indices.graphics_family == null) {
             indices.graphics_family = index;
         }
 
-        if (try self.vk_instance.getPhysicalDeviceSurfaceSupportKHR(device, index, self.surface) != 0) {
+        if (try self.vk_instance.getPhysicalDeviceSurfaceSupportKHR(device, index, self.surface) == vk.TRUE) {
             indices.present_family = index;
         }
 
+        if (queue_family.queue_flags.transfer_bit and indices.graphics_family != index) {
+            indices.transfer_family = index;
+        }
+
         if (indices.isComplete()) {
-            break;
+            return indices;
         }
     }
 
