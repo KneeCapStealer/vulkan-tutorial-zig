@@ -10,6 +10,7 @@ const set = @import("set");
 const math = @import("math.zig");
 const Vec2 = math.Vec2;
 const Vec3 = math.Vec3;
+const Mat4 = math.Mat4;
 
 const Vertex = struct {
     pos: Vec2,
@@ -38,6 +39,12 @@ const Vertex = struct {
             .offset = @offsetOf(Vertex, "color"),
         } };
     }
+};
+
+const UniformBufferObject = extern struct {
+    model: Mat4,
+    view: Mat4,
+    proj: Mat4,
 };
 
 const App = @This();
@@ -86,6 +93,7 @@ swap_chain_image_views: []vk.ImageView,
 swap_chain_framebuffers: []vk.Framebuffer,
 
 render_pass: vk.RenderPass,
+descriptor_set_layout: vk.DescriptorSetLayout,
 pipeline_layout: vk.PipelineLayout,
 graphics_pipeline: vk.Pipeline,
 
@@ -109,6 +117,10 @@ vertex_buffer_memory: vk.DeviceMemory,
 indices: []const u32,
 index_buffer: vk.Buffer,
 index_buffer_memory: vk.DeviceMemory,
+
+uniform_buffers: []vk.Buffer,
+uniform_buffer_memories: []vk.DeviceMemory,
+uniform_buffers_mapped: []*anyopaque,
 
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
@@ -157,6 +169,7 @@ pub fn init() App {
         .swap_chain_framebuffers = undefined,
 
         .render_pass = .null_handle,
+        .descriptor_set_layout = .null_handle,
         .pipeline_layout = .null_handle,
         .graphics_pipeline = .null_handle,
 
@@ -188,6 +201,10 @@ pub fn init() App {
         },
         .index_buffer = .null_handle,
         .index_buffer_memory = .null_handle,
+
+        .uniform_buffers = &.{},
+        .uniform_buffer_memories = &.{},
+        .uniform_buffers_mapped = &.{},
     };
 }
 
@@ -265,13 +282,46 @@ fn initVulkan(self: *App) !void {
     try self.createSwapChain();
     try self.createImageViews();
     try self.createRenderPass();
+    try self.createDescriptorSetLayout();
     try self.createGraphicsPipeline();
     try self.createFramebuffers();
     try self.createCommandPool();
     try self.createVertexBuffer();
     try self.createIndexBuffer();
+    try self.createUniformBuffers();
     try self.createCommandBuffers();
     try self.createSyncObjects();
+}
+
+fn createUniformBuffers(self: *App) !void {
+    const buffer_size: vk.DeviceSize = @sizeOf(UniformBufferObject);
+
+    self.uniform_buffers = try allocator.alloc(vk.Buffer, max_frames_in_flight);
+    self.uniform_buffer_memories = try allocator.alloc(vk.DeviceMemory, max_frames_in_flight);
+    self.uniform_buffers_mapped = try allocator.alloc(*anyopaque, max_frames_in_flight);
+
+    for (self.uniform_buffers, self.uniform_buffer_memories, self.uniform_buffers_mapped) |*buffer, *memory, *mapped| {
+        buffer.*, memory.* = try self.createBuffer(buffer_size, .{ .uniform_buffer_bit = true }, .{ .host_visible_bit = true, .host_coherent_bit = true });
+
+        const possibly_null = try self.vk_device.mapMemory(memory.*, 0, buffer_size, .{});
+        mapped.* = possibly_null.?;
+    }
+}
+
+fn createDescriptorSetLayout(self: *App) !void {
+    const ubo_layout_binding: vk.DescriptorSetLayoutBinding = .{
+        .binding = 0,
+        .descriptor_type = .uniform_buffer,
+        .descriptor_count = 1,
+        .stage_flags = .{ .vertex_bit = true },
+    };
+
+    const layout_info: vk.DescriptorSetLayoutCreateInfo = .{
+        .binding_count = 1,
+        .p_bindings = @ptrCast(&ubo_layout_binding),
+    };
+
+    self.descriptor_set_layout = try self.vk_device.createDescriptorSetLayout(&layout_info, null);
 }
 
 fn createIndexBuffer(self: *App) !void {
@@ -948,9 +998,11 @@ fn setupDebugMessenger(self: *App) !void {
     self.debug_messenger = try self.vk_instance.createDebugUtilsMessengerEXT(&create_info, null);
 }
 
+var timer: std.time.Timer = undefined;
 fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
+        timer = std.time.Timer.start() catch unreachable;
         try self.drawFrame();
     }
 
@@ -972,6 +1024,8 @@ fn drawFrame(self: *App) !void {
         }
         return err;
     };
+
+    try self.updateUniformBuffer(self.current_frame);
 
     // Only reset the fences after we are sure we will do work
     // If fences are reset and we recreate swapchain and return early, then the program will deadlock.
@@ -1017,8 +1071,36 @@ fn drawFrame(self: *App) !void {
     self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
 
+fn updateUniformBuffer(self: *App, current_image: u32) !void {
+    const seconds: f32 = @as(f32, @floatFromInt(timer.read())) / @as(f32, @floatFromInt(std.time.ns_per_s));
+
+    var ubo: UniformBufferObject = .{
+        .model = math.rotate(Mat4.identity, seconds * std.math.degreesToRadians(90), .{ .x = 0, .y = 0, .z = 1 }),
+        .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
+        .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
+    };
+    ubo.proj.y.y *= -1;
+
+    const buffer: *UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[current_image]));
+
+    buffer.* = ubo;
+
+    // @memcpy(self.uniform_buffers_mapped[current_image], &ubo);
+}
+
 fn cleanup(self: *App) void {
     try self.cleanupSwapChain();
+
+    for (self.uniform_buffers, self.uniform_buffer_memories) |buffer, memory| {
+        self.vk_device.destroyBuffer(buffer, null);
+        self.vk_device.freeMemory(memory, null);
+    }
+
+    allocator.free(self.uniform_buffers);
+    allocator.free(self.uniform_buffer_memories);
+    allocator.free(self.uniform_buffers_mapped);
+
+    self.vk_device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
 
     self.vk_device.destroyBuffer(self.index_buffer, null);
     self.vk_device.freeMemory(self.index_buffer_memory, null);
