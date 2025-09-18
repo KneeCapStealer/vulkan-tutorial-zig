@@ -28,7 +28,7 @@
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.15.1",
 
     // This field is optional.
     // Each dependency must either provide a `url` and `hash`, or a `path`.
@@ -37,16 +37,12 @@
     // internet connectivity.
     .dependencies = .{
         .vulkan = .{
-            .url = "git+https://github.com/Snektron/vulkan-zig.git#42e7a8409b8150e1cbd57a8ff8cec219114bac74",
-            .hash = "vulkan-0.0.0-r7Ytx2dUAwDhoUvuIqliqPUbyDZZi0bl_CQIwspUpHs_",
+            .url = "git+https://github.com/KneeCapStealer/vulkan-zig#d04abd85a667b8a14152e8d366f9aef9bc625bce",
+            .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
         },
         .zglfw = .{
-            .url = "git+https://github.com/IridescenceTech/zglfw.git#5d25d66b3d4912c9cb66e4db9dfb80a6eecc84ad",
-            .hash = "zglfw-0.1.0-BghZXfnRAACSrPga22je1XilEj1QNXrtv6w4HIUFqdks",
-        },
-        .ziglangSet = .{
-            .url = "git+https://github.com/deckarep/ziglang-set.git#66c5ab9ca1ca67bee2ac19d854589b3cf23cd6fe",
-            .hash = "ziglangSet-0.0.1-VUjv0poUAgCNnJ8mjuXpZ81KSDap5Nmd_WLb7hFRS18f",
+            .url = "git+https://github.com/zig-gamedev/zglfw#3a3f0d2c040902c717402d58e96ae1553bee550d",
+            .hash = "zglfw-0.10.0-dev-zgVDNHOuIQC9B7kIg7w6a0K07ZKD_QKYf-OJ6SqiLwg1",
         },
     },
     .paths = .{

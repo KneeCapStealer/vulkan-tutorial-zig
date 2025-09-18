@@ -43,8 +43,8 @@
               ]
               ++ (with pkgs; [
                 zig
-                glfw
                 lldb
+                pkgs.xorg.libX11
               ]);
 
             shellHook = ''

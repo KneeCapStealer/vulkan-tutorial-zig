@@ -5,7 +5,6 @@ const builtin = @import("builtin");
 
 const glfw = @import("glfw");
 const vk = @import("vulkan");
-const set = @import("set");
 
 const math = @import("math.zig");
 const Vec2 = math.Vec2;
@@ -209,6 +208,7 @@ pub fn init() App {
 }
 
 pub fn run(self: *App) !void {
+    try glfw.initHint(.platform, glfw.Platform.x11);
     try glfw.init();
 
     try self.initWindow();
@@ -218,15 +218,15 @@ pub fn run(self: *App) !void {
 }
 
 fn initWindow(self: *App) !void {
-    glfw.windowHint(glfw.ClientAPI, glfw.NoAPI);
+    glfw.windowHint(glfw.WindowHint.client_api, glfw.ClientApi.no_api);
 
-    self.window = try glfw.createWindow(width, height, "Vulkan", null, null);
+    self.window = try glfw.createWindow(width, height, "Vulkan", null);
     glfw.setWindowUserPointer(self.window, self);
     _ = glfw.setFramebufferSizeCallback(self.window, framebufferResizeCallback);
 }
 
-fn framebufferResizeCallback(window: *glfw.Window, _: c_int, _: c_int) callconv(.C) void {
-    const self: *App = @alignCast(@ptrCast(glfw.getWindowUserPointer(window)));
+fn framebufferResizeCallback(window: *glfw.Window, _: c_int, _: c_int) callconv(.c) void {
+    const self: *App = glfw.getWindowUserPointer(window, App).?;
 
     self.framebuffer_resized = true;
 }
@@ -266,9 +266,7 @@ fn createInstance(self: *App) !void {
 }
 
 fn createSurface(self: *App) !void {
-    if (glfw.createWindowSurface(@intFromEnum(self.vk_instance.handle), self.window, null, @ptrCast(&self.surface)) != glfw.VkResult.success) {
-        return error.WindowSurfaceCreationFailed;
-    }
+    try glfw.createWindowSurface(@ptrFromInt(@intFromEnum(self.vk_instance.handle)), self.window, null, @ptrCast(&self.surface));
 }
 
 fn initVulkan(self: *App) !void {
@@ -658,7 +656,7 @@ fn createGraphicsPipeline(self: *App) !void {
     };
 
     // We are drawing triangles, not lines, or points
-    const input_assembly: vk.PipelineInputAssemblyStateCreateInfo = .{ .topology = .triangle_list, .primitive_restart_enable = vk.FALSE };
+    const input_assembly: vk.PipelineInputAssemblyStateCreateInfo = .{ .topology = .triangle_list, .primitive_restart_enable = .false };
 
     const viewport: vk.Viewport = .{
         .width = @floatFromInt(self.swap_chain_extent.width),
@@ -674,24 +672,24 @@ fn createGraphicsPipeline(self: *App) !void {
     const viewport_state: vk.PipelineViewportStateCreateInfo = .{ .viewport_count = 1, .p_viewports = @ptrCast(&viewport), .scissor_count = 1, .p_scissors = @ptrCast(&scissor) };
 
     const rasterizer: vk.PipelineRasterizationStateCreateInfo = .{
-        .depth_clamp_enable = vk.FALSE,
-        .rasterizer_discard_enable = vk.FALSE,
+        .depth_clamp_enable = .false,
+        .rasterizer_discard_enable = .false,
         .polygon_mode = .fill,
         .line_width = 1,
         .cull_mode = .{ .back_bit = true },
         .front_face = .clockwise,
-        .depth_bias_enable = vk.FALSE,
+        .depth_bias_enable = .false,
         .depth_bias_clamp = 0,
         .depth_bias_constant_factor = 0,
         .depth_bias_slope_factor = 0,
     };
 
     const multisampling: vk.PipelineMultisampleStateCreateInfo = .{
-        .sample_shading_enable = vk.FALSE,
+        .sample_shading_enable = .false,
         .rasterization_samples = .{ .@"1_bit" = true },
         .min_sample_shading = 1,
-        .alpha_to_coverage_enable = vk.FALSE,
-        .alpha_to_one_enable = vk.FALSE,
+        .alpha_to_coverage_enable = .false,
+        .alpha_to_one_enable = .false,
     };
 
     const color_blend_attachment: vk.PipelineColorBlendAttachmentState = .{
@@ -699,7 +697,7 @@ fn createGraphicsPipeline(self: *App) !void {
         .color_write_mask = .{ .a_bit = true, .b_bit = true, .g_bit = true, .r_bit = true },
 
         // Don't blend colors with previos colors
-        .blend_enable = vk.FALSE,
+        .blend_enable = .false,
         .src_color_blend_factor = .one,
         .dst_color_blend_factor = .zero,
         .color_blend_op = .add,
@@ -710,7 +708,7 @@ fn createGraphicsPipeline(self: *App) !void {
 
     const color_blend: vk.PipelineColorBlendStateCreateInfo = .{
         // Again don't do color blending
-        .logic_op_enable = vk.FALSE,
+        .logic_op_enable = .false,
         .logic_op = .copy,
         .attachment_count = 1,
         .p_attachments = @ptrCast(&color_blend_attachment),
@@ -861,7 +859,7 @@ fn createSwapChain(self: *App) !void {
         .composite_alpha = .{ .opaque_bit_khr = true },
         // If pixels are obscured (another window is covering them), don't render their color.
         // This might be a bad option for some post processing effects, but it enabled better performance.
-        .clipped = vk.TRUE,
+        .clipped = .true,
         // Since we don't have an old swapchain, this value is null
         // If we were recreating a swapchain (e.g. when resizing), this field MUST be specified
         .old_swapchain = vk.SwapchainKHR.null_handle,
@@ -882,19 +880,29 @@ fn createLogicalDevice(self: *App) !void {
         return error.FailedToFindQueueFamilies;
     }
 
-    var unique_queue_families: set.Set(u32) = .init(allocator);
-    defer unique_queue_families.deinit();
-    _ = try unique_queue_families.appendSlice(&.{ indices.present_family.?, indices.graphics_family.?, indices.transfer_family.? });
+    var unique_queue_families: std.ArrayList(u32) = .empty;
+    defer unique_queue_families.deinit(allocator);
 
-    var iter = unique_queue_families.iterator();
-    var queue_create_infos: std.ArrayList(vk.DeviceQueueCreateInfo) = .init(allocator);
-    defer queue_create_infos.deinit();
+    const all_queue_families: []const u32 = &.{ indices.present_family.?, indices.graphics_family.?, indices.transfer_family.? };
+    outer: for (all_queue_families) |family| {
+        for (unique_queue_families.items) |unique| {
+            if (family == unique) {
+                // The family is already in the ArrayList
+                continue :outer;
+            }
+        }
+
+        try unique_queue_families.append(allocator, family);
+    }
+
+    var queue_create_infos: std.ArrayList(vk.DeviceQueueCreateInfo) = .empty;
+    defer queue_create_infos.deinit(allocator);
 
     const queue_prio: f32 = 1.0;
 
-    while (iter.next()) |queue_family| {
-        try queue_create_infos.append(vk.DeviceQueueCreateInfo{
-            .queue_family_index = queue_family.*,
+    for (unique_queue_families.items) |queue_family| {
+        try queue_create_infos.append(allocator, vk.DeviceQueueCreateInfo{
+            .queue_family_index = queue_family,
             .queue_count = 1,
             .p_queue_priorities = @ptrCast(&queue_prio),
         });
@@ -1010,7 +1018,7 @@ fn mainLoop(self: *App) !void {
 }
 
 fn drawFrame(self: *App) !void {
-    _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), vk.TRUE, std.math.maxInt(u64));
+    _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), .true, std.math.maxInt(u64));
 
     // 'render_finished_semaphores' give validation errors because the semaphores might still be in use when rendering.
     // This isn't the case, but in more complex scenarios this could easily happen.
@@ -1154,17 +1162,16 @@ fn checkValLayerSupport(self: *App) !bool {
 }
 
 fn getRequiredExtensions() ![]const [*:0]const u8 {
-    var glfw_extension_count: u32 = undefined;
-    const glfw_extensions = glfw.getRequiredInstanceExtensions(&glfw_extension_count) orelse (&[_][*:0]const u8{}).ptr;
+    const glfw_extensions = try glfw.getRequiredInstanceExtensions();
 
-    var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(glfw_extension_count + 1));
-    extensions.appendSliceAssumeCapacity(glfw_extensions[0..glfw_extension_count]);
+    var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(glfw_extensions.len + 1));
+    extensions.appendSliceAssumeCapacity(glfw_extensions[0..glfw_extensions.len]);
 
     if (enable_val_layers) {
         extensions.appendAssumeCapacity(vk.extensions.ext_debug_utils.name.ptr);
     }
 
-    return try extensions.toOwnedSlice();
+    return try extensions.toOwnedSlice(allocator);
 }
 
 const QueueFamilyIndices = struct {
@@ -1196,7 +1203,7 @@ fn findQueueFamilies(self: *const App, device: vk.PhysicalDevice) !QueueFamilyIn
             indices.graphics_family = index;
         }
 
-        if (try self.vk_instance.getPhysicalDeviceSurfaceSupportKHR(device, index, self.surface) == vk.TRUE) {
+        if (try self.vk_instance.getPhysicalDeviceSurfaceSupportKHR(device, index, self.surface) == .true) {
             indices.present_family = index;
         }
 
@@ -1277,7 +1284,7 @@ fn debugCallback(
 
     std.debug.print("\n[DEBUG] [{s}] [{s}]: {s}\n", .{ severity, @"type", callback_data.?.p_message.? });
 
-    return vk.FALSE;
+    return .false;
 }
 
 const default_debug_messenger_create_info: vk.DebugUtilsMessengerCreateInfoEXT = .{
@@ -1301,4 +1308,4 @@ const default_debug_messenger_create_info: vk.DebugUtilsMessengerCreateInfoEXT =
 };
 
 // Define the function ourselves because glfw.getInstanceProcAddr doesn't use correct types
-extern fn glfwGetInstanceProcAddress(vk.Instance, [*:0]const u8) callconv(.C) vk.PfnVoidFunction;
+extern fn glfwGetInstanceProcAddress(vk.Instance, [*:0]const u8) callconv(.c) vk.PfnVoidFunction;

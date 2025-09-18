@@ -24,11 +24,20 @@ pub fn build(b: *std.Build) void {
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
 
-    const glfw = b.dependency("zglfw", .{}).module("glfw");
-    exe.root_module.addImport("glfw", glfw);
+    const glfw = b.dependency("zglfw", .{
+        .target = target,
+        .optimize = optimize,
+        .x11 = true,
+        .wayland = true,
+        .shared = true,
+    });
+    exe.root_module.addImport("glfw", glfw.module("root"));
 
-    const ziglangSet = b.dependency("ziglangSet", .{});
-    exe.root_module.addImport("set", ziglangSet.module("ziglangSet"));
+    if (target.result.os.tag != .emscripten) {
+        exe.linkLibrary(glfw.artifact("glfw"));
+        exe.linkLibC();
+        exe.linkLibCpp();
+    }
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
