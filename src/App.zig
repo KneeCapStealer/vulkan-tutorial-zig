@@ -301,7 +301,7 @@ fn createUniformBuffers(self: *App) !void {
     for (self.uniform_buffers, self.uniform_buffer_memories, self.uniform_buffers_mapped) |*buffer, *memory, *mapped| {
         buffer.*, memory.* = try self.createBuffer(buffer_size, .{ .uniform_buffer_bit = true }, .{ .host_visible_bit = true, .host_coherent_bit = true });
 
-        const possibly_null = try self.vk_device.mapMemory(memory.*, 0, buffer_size, .{});
+        const possibly_null = try self.vk_device.mapMemory(memory.*, 0, buffer_size, vk.MemoryMapFlags.fromInt(0));
         mapped.* = possibly_null.?;
     }
 }
@@ -312,6 +312,7 @@ fn createDescriptorSetLayout(self: *App) !void {
         .descriptor_type = .uniform_buffer,
         .descriptor_count = 1,
         .stage_flags = .{ .vertex_bit = true },
+        .p_immutable_samplers = null,
     };
 
     const layout_info: vk.DescriptorSetLayoutCreateInfo = .{
@@ -333,10 +334,8 @@ fn createIndexBuffer(self: *App) !void {
 
     // Copy data to host visisble buffer
     const data = try self.vk_device.mapMemory(staging_buffer_memory, 0, buffer_size, .{});
-    var mapped: []u32 = undefined;
-    mapped.len = self.indices.len;
-    mapped.ptr = @ptrCast(@alignCast(data));
-    @memcpy(mapped, self.indices);
+    const ptr: [*]u32 = @ptrCast(@alignCast(data));
+    @memcpy(ptr, self.indices);
     self.vk_device.unmapMemory(staging_buffer_memory);
 
     // Create a device local buffer and copy data
@@ -358,10 +357,8 @@ fn createVertexBuffer(self: *App) !void {
     });
 
     const data = try self.vk_device.mapMemory(staging_buffer_memory, 0, buffer_size, .{});
-    var mapped: []Vertex = undefined;
-    mapped.len = self.verticies.len;
-    mapped.ptr = @ptrCast(@alignCast(data));
-    @memcpy(mapped, self.verticies);
+    const ptr: [*]Vertex = @ptrCast(@alignCast(data));
+    @memcpy(ptr, self.verticies);
     self.vk_device.unmapMemory(staging_buffer_memory);
 
     self.vertex_buffer, self.vertex_buffer_memory = try self.createBuffer(buffer_size, .{
@@ -669,7 +666,12 @@ fn createGraphicsPipeline(self: *App) !void {
 
     const scissor: vk.Rect2D = .{ .extent = self.swap_chain_extent, .offset = .{ .y = 0, .x = 0 } };
 
-    const viewport_state: vk.PipelineViewportStateCreateInfo = .{ .viewport_count = 1, .p_viewports = @ptrCast(&viewport), .scissor_count = 1, .p_scissors = @ptrCast(&scissor) };
+    const viewport_state: vk.PipelineViewportStateCreateInfo = .{
+        .viewport_count = 1,
+        .p_viewports = @ptrCast(&viewport),
+        .scissor_count = 1,
+        .p_scissors = @ptrCast(&scissor),
+    };
 
     const rasterizer: vk.PipelineRasterizationStateCreateInfo = .{
         .depth_clamp_enable = .false,
@@ -715,7 +717,10 @@ fn createGraphicsPipeline(self: *App) !void {
         .blend_constants = .{ 0.0, 0.0, 0.0, 0.0 },
     };
 
-    const pipeline_layout_info: vk.PipelineLayoutCreateInfo = .{};
+    const pipeline_layout_info: vk.PipelineLayoutCreateInfo = .{
+        .set_layout_count = 1,
+        .p_set_layouts = @ptrCast(@alignCast(&self.descriptor_set_layout)),
+    };
 
     self.pipeline_layout = try self.vk_device.createPipelineLayout(&pipeline_layout_info, null);
 
@@ -1081,9 +1086,10 @@ fn drawFrame(self: *App) !void {
 
 fn updateUniformBuffer(self: *App, current_image: u32) !void {
     const seconds: f32 = @as(f32, @floatFromInt(timer.read())) / @as(f32, @floatFromInt(std.time.ns_per_s));
+    _ = seconds;
 
     var ubo: UniformBufferObject = .{
-        .model = math.rotate(Mat4.identity, seconds * std.math.degreesToRadians(90), .{ .x = 0, .y = 0, .z = 1 }),
+        .model = math.rotate(Mat4.identity, 0, .{ .x = 0, .y = 0, .z = 1 }),
         .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
         .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     };
@@ -1092,8 +1098,6 @@ fn updateUniformBuffer(self: *App, current_image: u32) !void {
     const buffer: *UniformBufferObject = @ptrCast(@alignCast(self.uniform_buffers_mapped[current_image]));
 
     buffer.* = ubo;
-
-    // @memcpy(self.uniform_buffers_mapped[current_image], &ubo);
 }
 
 fn cleanup(self: *App) void {
