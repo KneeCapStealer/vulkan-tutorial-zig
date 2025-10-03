@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const meta = std.meta;
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 
 const glfw = @import("glfw");
 const vk = @import("vulkan");
@@ -48,8 +49,8 @@ const UniformBufferObject = extern struct {
 
 const App = @This();
 
-var debugAllocator = std.heap.DebugAllocator(.{}){};
-const allocator = if (builtin.mode == .Debug) debugAllocator.allocator() else std.heap.smp_allocator;
+var debug_allocator = if (builtin.mode == .Debug) std.heap.DebugAllocator(.{}){} else {};
+const allocator = if (builtin.mode == .Debug) debug_allocator.allocator() else std.heap.smp_allocator;
 
 const width = 800;
 const height = 600;
@@ -120,6 +121,9 @@ index_buffer_memory: vk.DeviceMemory,
 uniform_buffers: []vk.Buffer,
 uniform_buffer_memories: []vk.DeviceMemory,
 uniform_buffers_mapped: []*anyopaque,
+
+descriptor_pool: vk.DescriptorPool,
+descriptor_sets: []vk.DescriptorSet,
 
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
@@ -204,6 +208,9 @@ pub fn init() App {
         .uniform_buffers = &.{},
         .uniform_buffer_memories = &.{},
         .uniform_buffers_mapped = &.{},
+
+        .descriptor_pool = .null_handle,
+        .descriptor_sets = &.{},
     };
 }
 
@@ -252,6 +259,7 @@ fn createInstance(self: *App) !void {
 
     // extensions
     const extensions = try getRequiredExtensions();
+    defer allocator.free(extensions);
     const instance_create_info: vk.InstanceCreateInfo = .{
         .p_application_info = &appInfo,
         .enabled_layer_count = enabled_layer_count,
@@ -287,8 +295,62 @@ fn initVulkan(self: *App) !void {
     try self.createVertexBuffer();
     try self.createIndexBuffer();
     try self.createUniformBuffers();
+    try self.createDescriptorPool();
+    try self.createDescriptorSets();
     try self.createCommandBuffers();
     try self.createSyncObjects();
+}
+
+fn createDescriptorSets(self: *App) !void {
+    const layouts: []const vk.DescriptorSetLayout = &.{
+        self.descriptor_set_layout,
+        self.descriptor_set_layout,
+    };
+    assert(layouts.len == max_frames_in_flight);
+
+    const alloc_info: vk.DescriptorSetAllocateInfo = .{
+        .descriptor_pool = self.descriptor_pool,
+        .descriptor_set_count = max_frames_in_flight,
+        .p_set_layouts = layouts.ptr,
+    };
+
+    self.descriptor_sets = try allocator.alloc(vk.DescriptorSet, max_frames_in_flight);
+    try self.vk_device.allocateDescriptorSets(&alloc_info, self.descriptor_sets.ptr);
+
+    for (0..max_frames_in_flight) |i| {
+        const buffer_info: vk.DescriptorBufferInfo = .{
+            .buffer = self.uniform_buffers[i],
+            .offset = 0,
+            .range = @sizeOf(UniformBufferObject),
+        };
+        const descriptor_write: vk.WriteDescriptorSet = .{
+            .dst_set = self.descriptor_sets[i],
+            .dst_binding = 0,
+            .dst_array_element = 0,
+            .descriptor_type = .uniform_buffer,
+            .descriptor_count = 1,
+            .p_buffer_info = @ptrCast(&buffer_info),
+            // These are irelevant but don't accept nullptrs ???
+            .p_image_info = @ptrFromInt(8),
+            .p_texel_buffer_view = @ptrFromInt(8),
+        };
+
+        self.vk_device.updateDescriptorSets(1, @ptrCast(&descriptor_write), 0, null);
+    }
+}
+
+fn createDescriptorPool(self: *App) !void {
+    const pool_size: vk.DescriptorPoolSize = .{
+        .descriptor_count = max_frames_in_flight,
+        .type = .uniform_buffer,
+    };
+    const pool_info: vk.DescriptorPoolCreateInfo = .{
+        .pool_size_count = 1,
+        .p_pool_sizes = @ptrCast(&pool_size),
+        .max_sets = max_frames_in_flight,
+    };
+
+    self.descriptor_pool = try self.vk_device.createDescriptorPool(&pool_info, null);
 }
 
 fn createUniformBuffers(self: *App) !void {
@@ -501,8 +563,9 @@ fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index
     cmd_buf.bindVertexBuffers(0, 1, &vertex_buffers, &offsets);
     cmd_buf.bindIndexBuffer(self.index_buffer, 0, .uint32);
 
+    cmd_buf.bindDescriptorSets(.graphics, self.pipeline_layout, 0, 1, @ptrCast(&self.descriptor_sets[self.current_frame]), 0, null);
     cmd_buf.drawIndexed(@intCast(self.indices.len), 1, 0, 0, 0);
-    cmd_buf.draw(@intCast(self.verticies.len), 1, 0, 0);
+    //cmd_buf.draw(@intCast(self.verticies.len), 1, 0, 0);
     cmd_buf.endRenderPass();
 
     try cmd_buf.endCommandBuffer();
@@ -610,8 +673,10 @@ fn createGraphicsPipeline(self: *App) !void {
 
     // Shader creation
     const vert_code = try vertex_shader.readToEndAlloc(allocator, std.math.maxInt(usize));
+    defer allocator.free(vert_code);
     vertex_shader.close();
     const frag_code = try fragment_shader.readToEndAlloc(allocator, std.math.maxInt(usize));
+    defer allocator.free(frag_code);
     fragment_shader.close();
 
     const vert_shader_module = try self.createShaderModule(vert_code);
@@ -679,7 +744,7 @@ fn createGraphicsPipeline(self: *App) !void {
         .polygon_mode = .fill,
         .line_width = 1,
         .cull_mode = .{ .back_bit = true },
-        .front_face = .clockwise,
+        .front_face = .counter_clockwise,
         .depth_bias_enable = .false,
         .depth_bias_clamp = 0,
         .depth_bias_constant_factor = 0,
@@ -806,16 +871,21 @@ fn cleanupSwapChain(self: *App) !void {
     for (self.swap_chain_framebuffers) |framebuffer| {
         self.vk_device.destroyFramebuffer(framebuffer, null);
     }
+    allocator.free(self.swap_chain_framebuffers);
 
     for (self.swap_chain_image_views) |view| {
         self.vk_device.destroyImageView(view, null);
     }
+    allocator.free(self.swap_chain_image_views);
+    allocator.free(self.swap_chain_images);
 
     self.vk_device.destroySwapchainKHR(self.swap_chain, null);
 }
 
 fn createSwapChain(self: *App) !void {
     const swap_chain_details = try self.querySwapChainSupport(self.vk_physical);
+    defer allocator.free(swap_chain_details.formats);
+    defer allocator.free(swap_chain_details.present_modes);
 
     // Find optimal settings for the swap chain.
     const format = self.chooseSwapSurfaceFormat(swap_chain_details.formats);
@@ -942,6 +1012,7 @@ fn createLogicalDevice(self: *App) !void {
 
 fn pickPhysicalDevice(self: *App) !void {
     const physical_devices = try self.vk_instance.enumeratePhysicalDevicesAlloc(allocator);
+    defer allocator.free(physical_devices);
     if (physical_devices.len == 0) {
         return error.NoVulkanDevice;
     }
@@ -982,6 +1053,7 @@ fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
 
 fn checkDeviceExtensionSupport(self: *App, device: vk.PhysicalDevice) !bool {
     const available_extensions = try self.vk_instance.enumerateDeviceExtensionPropertiesAlloc(device, null, allocator);
+    defer allocator.free(available_extensions);
 
     outer: for (device_extensions) |required| {
         for (available_extensions) |available| {
@@ -1011,11 +1083,9 @@ fn setupDebugMessenger(self: *App) !void {
     self.debug_messenger = try self.vk_instance.createDebugUtilsMessengerEXT(&create_info, null);
 }
 
-var timer: std.time.Timer = undefined;
 fn mainLoop(self: *App) !void {
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
-        timer = std.time.Timer.start() catch unreachable;
         try self.drawFrame();
     }
 
@@ -1085,13 +1155,18 @@ fn drawFrame(self: *App) !void {
 }
 
 fn updateUniformBuffer(self: *App, current_image: u32) !void {
-    const seconds: f32 = @as(f32, @floatFromInt(timer.read())) / @as(f32, @floatFromInt(std.time.ns_per_s));
-    _ = seconds;
-
+    // var ubo: UniformBufferObject = .{
+    //     .model = math.rotate(Mat4.identity, 0, .{ .x = 0, .y = 0, .z = 1 }),
+    //     .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
+    //     .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
+    // };
+    //
     var ubo: UniformBufferObject = .{
-        .model = math.rotate(Mat4.identity, 0, .{ .x = 0, .y = 0, .z = 1 }),
-        .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
-        .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
+        .model = math.rotate(Mat4.identity, 1, .{ .x = 0, .y = 0, .z = 1 }),
+        .view = .identity,
+        // .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
+        .proj = .identity,
+        // .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     };
     ubo.proj.y.y *= -1;
 
@@ -1112,7 +1187,10 @@ fn cleanup(self: *App) void {
     allocator.free(self.uniform_buffer_memories);
     allocator.free(self.uniform_buffers_mapped);
 
+    self.vk_device.destroyDescriptorPool(self.descriptor_pool, null);
     self.vk_device.destroyDescriptorSetLayout(self.descriptor_set_layout, null);
+
+    allocator.free(self.descriptor_sets);
 
     self.vk_device.destroyBuffer(self.index_buffer, null);
     self.vk_device.freeMemory(self.index_buffer_memory, null);
@@ -1143,10 +1221,20 @@ fn cleanup(self: *App) void {
     self.vk_instance.destroyInstance(null);
     glfw.destroyWindow(self.window);
     glfw.terminate();
+
+    if (builtin.mode == .Debug) {
+        const result = debug_allocator.deinit();
+        if (result == .leak) {
+            std.debug.print("\n\nPANIC PANIC EVERYBODY PANIC THERE IS A LEAK AAAAAAAAAAAAAAAAAAAA\n\n", .{});
+        } else {
+            std.debug.print("\n\nNo leaks detected\n\n", .{});
+        }
+    }
 }
 
 fn checkValLayerSupport(self: *App) !bool {
     const available_layers = try self.vk_base.enumerateInstanceLayerPropertiesAlloc(allocator);
+    defer allocator.free(available_layers);
 
     outer: for (val_layers) |required| {
         for (available_layers) |available| {
@@ -1169,6 +1257,7 @@ fn getRequiredExtensions() ![]const [*:0]const u8 {
     const glfw_extensions = try glfw.getRequiredInstanceExtensions();
 
     var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(glfw_extensions.len + 1));
+    defer extensions.deinit(allocator);
     extensions.appendSliceAssumeCapacity(glfw_extensions[0..glfw_extensions.len]);
 
     if (enable_val_layers) {
@@ -1200,6 +1289,8 @@ fn findQueueFamilies(self: *const App, device: vk.PhysicalDevice) !QueueFamilyIn
     var indices: QueueFamilyIndices = .{};
 
     const queue_families = try self.vk_instance.getPhysicalDeviceQueueFamilyPropertiesAlloc(device, allocator);
+    defer allocator.free(queue_families);
+
     for (queue_families, 0..) |queue_family, i| {
         const index: u32 = @intCast(i);
 

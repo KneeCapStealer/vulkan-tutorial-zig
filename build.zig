@@ -35,8 +35,6 @@ pub fn build(b: *std.Build) void {
 
     if (target.result.os.tag != .emscripten) {
         exe.linkLibrary(glfw.artifact("glfw"));
-        exe.linkLibC();
-        exe.linkLibCpp();
     }
 
     const run_cmd = b.addRunArtifact(exe);

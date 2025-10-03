@@ -37,8 +37,8 @@
     // internet connectivity.
     .dependencies = .{
         .vulkan = .{
-            .url = "git+https://github.com/KneeCapStealer/vulkan-zig#d04abd85a667b8a14152e8d366f9aef9bc625bce",
-            .hash = "vulkan-0.0.0-r7Ytx6hBAwD8X_TN32qlkzul4riK6vFvjtK9fZfRvALg",
+            .url = "https://github.com/Snektron/vulkan-zig/archive/zig-0.15-compat.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx6hBAwBUnt0XA-uOkR2hda4fAHFhQITNTgJpnFkY",
         },
         .zglfw = .{
             .url = "git+https://github.com/zig-gamedev/zglfw#3a3f0d2c040902c717402d58e96ae1553bee550d",
