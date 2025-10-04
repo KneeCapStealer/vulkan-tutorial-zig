@@ -743,7 +743,7 @@ fn createGraphicsPipeline(self: *App) !void {
         .rasterizer_discard_enable = .false,
         .polygon_mode = .fill,
         .line_width = 1,
-        .cull_mode = .{ .back_bit = true },
+        .cull_mode = .{},
         .front_face = .counter_clockwise,
         .depth_bias_enable = .false,
         .depth_bias_clamp = 0,
@@ -1084,6 +1084,7 @@ fn setupDebugMessenger(self: *App) !void {
 }
 
 fn mainLoop(self: *App) !void {
+    start = std.time.milliTimestamp();
     while (!glfw.windowShouldClose(self.window)) {
         glfw.pollEvents();
         try self.drawFrame();
@@ -1154,6 +1155,7 @@ fn drawFrame(self: *App) !void {
     self.current_frame = (self.current_frame + 1) % max_frames_in_flight;
 }
 
+var start: i64 = 0;
 fn updateUniformBuffer(self: *App, current_image: u32) !void {
     // var ubo: UniformBufferObject = .{
     //     .model = math.rotate(Mat4.identity, 0, .{ .x = 0, .y = 0, .z = 1 }),
@@ -1161,12 +1163,14 @@ fn updateUniformBuffer(self: *App, current_image: u32) !void {
     //     .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     // };
     //
+
+    const time = std.time.milliTimestamp() - start;
     var ubo: UniformBufferObject = .{
-        .model = math.rotate(Mat4.identity, 1, .{ .x = 0, .y = 0, .z = 1 }),
-        .view = .identity,
-        // .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
-        .proj = .identity,
-        // .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
+        .model = math.rotate(Mat4.identity, std.math.degreesToRadians(@as(f32, @floatFromInt(time))) / @as(f32, 1000) * 90, .{ .x = 0, .y = 0, .z = 1 }),
+        // .view = .identity,
+        .view = math.lookAtRH(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
+        // .proj = .identity,
+        .proj = math.perspectiveRH(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     };
     ubo.proj.y.y *= -1;
 

@@ -19,7 +19,7 @@ pub const Vec3 = extern struct {
 
     pub fn lenght(vec: Vec3) f32 {
         return std.math.sqrt(
-            (std.math.pow(f32, vec.x, 2) + std.math.pow(f32, vec.y, 2) + std.math.pow(f32, vec.z, 2)),
+            std.math.pow(f32, vec.x, 2) + std.math.pow(f32, vec.y, 2) + std.math.pow(f32, vec.z, 2),
         );
     }
 
@@ -143,6 +143,28 @@ pub fn rotate(m: Mat4, angle: f32, v: Vec3) Mat4 {
     };
 }
 
+pub fn lookAtRH(eye: Vec3, center: Vec3, up: Vec3) Mat4 {
+    const f: Vec3 = .normalize(Vec3.diff(center, eye));
+    const s: Vec3 = .normalize(Vec3.cross(f, up));
+    const u: Vec3 = .cross(s, f);
+
+    var result: Mat4 = .identity;
+    result.x.x = s.x;
+    result.y.x = s.y;
+    result.z.x = s.z;
+    result.x.y = u.x;
+    result.y.y = u.y;
+    result.z.y = u.z;
+    result.x.z = -f.x;
+    result.y.z = -f.y;
+    result.z.z = -f.z;
+    result.w.x = -Vec3.dot(s, eye);
+    result.w.y = -Vec3.dot(u, eye);
+    result.w.z = Vec3.dot(f, eye);
+
+    return result;
+}
+
 // glm lookAtLH
 pub fn lookAt(eye: Vec3, center: Vec3, up: Vec3) Mat4 {
     const f: Vec3 = .normalize(Vec3.diff(center, eye));
@@ -169,8 +191,7 @@ pub fn lookAt(eye: Vec3, center: Vec3, up: Vec3) Mat4 {
 // use glm perspectiveLH_ZO which means perspective Left Handed Zero One
 // As in left handed coordinate system with a 0 to 1 depth range.
 pub fn perspective(fovy: f32, aspect: f32, z_near: f32, z_far: f32) Mat4 {
-    const abs_aspect = if (aspect > 0) aspect else -aspect;
-    assert((abs_aspect - std.math.floatEps(f32)) > @as(f32, 0));
+    assert(@abs(aspect - std.math.floatEps(f32)) > @as(f32, 0));
 
     const tanHalfFovy: f32 = @tan(fovy / @as(f32, 2));
 
@@ -180,6 +201,21 @@ pub fn perspective(fovy: f32, aspect: f32, z_near: f32, z_far: f32) Mat4 {
     result.z.z = z_far / (z_far - z_near);
     result.z.w = @as(f32, 1);
     result.w.w = -(z_far * z_near) / (z_far - z_near);
+
+    return result;
+}
+
+// perspectiveRH_ZO
+pub fn perspectiveRH(fovy: f32, aspect: f32, z_near: f32, z_far: f32) Mat4 {
+    assert(@abs(aspect - std.math.floatEps(f32)) > @as(f32, 0));
+    const tan_half_fovy = @tan(fovy / @as(f32, 2));
+
+    var result: Mat4 = .zero;
+    result.x.x = @as(f32, 1) / (aspect * tan_half_fovy);
+    result.y.y = @as(f32, 1) / tan_half_fovy;
+    result.z.z = z_far / (z_near - z_far);
+    result.z.w = -@as(f32, 1);
+    result.w.z = -(z_far * z_near) / (z_far - z_near);
 
     return result;
 }
