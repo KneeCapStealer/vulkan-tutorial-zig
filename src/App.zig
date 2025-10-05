@@ -565,7 +565,6 @@ fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index
 
     cmd_buf.bindDescriptorSets(.graphics, self.pipeline_layout, 0, 1, @ptrCast(&self.descriptor_sets[self.current_frame]), 0, null);
     cmd_buf.drawIndexed(@intCast(self.indices.len), 1, 0, 0, 0);
-    //cmd_buf.draw(@intCast(self.verticies.len), 1, 0, 0);
     cmd_buf.endRenderPass();
 
     try cmd_buf.endCommandBuffer();
@@ -1157,20 +1156,11 @@ fn drawFrame(self: *App) !void {
 
 var start: i64 = 0;
 fn updateUniformBuffer(self: *App, current_image: u32) !void {
-    // var ubo: UniformBufferObject = .{
-    //     .model = math.rotate(Mat4.identity, 0, .{ .x = 0, .y = 0, .z = 1 }),
-    //     .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
-    //     .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
-    // };
-    //
-
     const time = std.time.milliTimestamp() - start;
     var ubo: UniformBufferObject = .{
         .model = math.rotate(Mat4.identity, std.math.degreesToRadians(@as(f32, @floatFromInt(time))) / @as(f32, 1000) * 90, .{ .x = 0, .y = 0, .z = 1 }),
-        // .view = .identity,
-        .view = math.lookAtRH(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
-        // .proj = .identity,
-        .proj = math.perspectiveRH(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
+        .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
+        .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     };
     ubo.proj.y.y *= -1;
 
