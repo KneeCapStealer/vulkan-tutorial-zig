@@ -42,9 +42,9 @@ const Vertex = struct {
 };
 
 const UniformBufferObject = extern struct {
-    model: Mat4,
-    view: Mat4,
-    proj: Mat4,
+    model: Mat4 align(16),
+    view: Mat4 align(16),
+    proj: Mat4 align(16),
 };
 
 const App = @This();
