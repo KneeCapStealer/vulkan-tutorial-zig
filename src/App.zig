@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 
 const glfw = @import("glfw");
 const vk = @import("vulkan");
+const img = @import("zigimg");
 
 const math = @import("math.zig");
 const Vec2 = math.Vec2;
@@ -52,8 +53,8 @@ const App = @This();
 var debug_allocator = if (builtin.mode == .Debug) std.heap.DebugAllocator(.{}){} else {};
 const allocator = if (builtin.mode == .Debug) debug_allocator.allocator() else std.heap.smp_allocator;
 
-const width = 800;
-const height = 600;
+const window_width = 800;
+const window_height = 600;
 
 // Validation layers
 const enable_val_layers = builtin.mode == .Debug;
@@ -124,6 +125,9 @@ uniform_buffers_mapped: []*anyopaque,
 
 descriptor_pool: vk.DescriptorPool,
 descriptor_sets: []vk.DescriptorSet,
+
+texture_image: vk.Image,
+texture_image_memory: vk.DeviceMemory,
 
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
@@ -211,6 +215,9 @@ pub fn init() App {
 
         .descriptor_pool = .null_handle,
         .descriptor_sets = &.{},
+
+        .texture_image = .null_handle,
+        .texture_image_memory = .null_handle,
     };
 }
 
@@ -227,7 +234,7 @@ pub fn run(self: *App) !void {
 fn initWindow(self: *App) !void {
     glfw.windowHint(glfw.WindowHint.client_api, glfw.ClientApi.no_api);
 
-    self.window = try glfw.createWindow(width, height, "Vulkan", null);
+    self.window = try glfw.createWindow(window_width, window_height, "Vulkan", null);
     glfw.setWindowUserPointer(self.window, self);
     _ = glfw.setFramebufferSizeCallback(self.window, framebufferResizeCallback);
 }
@@ -292,6 +299,7 @@ fn initVulkan(self: *App) !void {
     try self.createGraphicsPipeline();
     try self.createFramebuffers();
     try self.createCommandPool();
+    try self.createTextureImage();
     try self.createVertexBuffer();
     try self.createIndexBuffer();
     try self.createUniformBuffers();
@@ -301,11 +309,142 @@ fn initVulkan(self: *App) !void {
     try self.createSyncObjects();
 }
 
-fn createDescriptorSets(self: *App) !void {
-    const layouts: []const vk.DescriptorSetLayout = &.{
-        self.descriptor_set_layout,
-        self.descriptor_set_layout,
+fn transitionImageLayout(self: *App, image: vk.Image, format: vk.Format, old_layout: vk.ImageLayout, new_layout: vk.ImageLayout) !void {
+    const command_buffer = try self.beginSingleTimeCommands();
+    const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
+
+    const barrier: vk.ImageMemoryBarrier = .{
+        .old_layout = old_layout,
+        .new_layout = new_layout,
+        .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+        .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresource_range = .{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .base_array_layer = 0,
+            .layer_count = 1,
+            .level_count = 1,
+        },
+        .src_access_mask = 0, // todo
+        .dst_access_mask = 0, // todo
     };
+
+    cmd.pipelineBarrier(.{}, .{}, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
+
+    try self.endSingleTimeCommands(command_buffer);
+}
+
+fn beginSingleTimeCommands(self: *App) !vk.CommandBuffer {
+    const alloc_info: vk.CommandBufferAllocateInfo = .{
+        .command_buffer_count = 1,
+        .command_pool = self.command_pool,
+        .level = .primary,
+    };
+
+    var command_buffer: vk.CommandBuffer = undefined;
+    try self.vk_device.allocateCommandBuffers(&alloc_info, @ptrCast(&command_buffer));
+
+    const begin_info: vk.CommandBufferBeginInfo = .{ .flags = .{ .one_time_submit_bit = true } };
+    try self.vk_device.beginCommandBuffer(command_buffer, &begin_info);
+
+    return command_buffer;
+}
+
+inline fn endSingleTimeCommands(self: *App, command_buffer: vk.CommandBuffer) !void {
+    try self.vk_device.endCommandBuffer(command_buffer);
+
+    const submit_info: vk.SubmitInfo = .{
+        .command_buffer_count = 1,
+        .p_command_buffers = @ptrCast(&command_buffer),
+    };
+    try self.graphics_queue.submit(1, @ptrCast(&submit_info), .null_handle);
+    try self.graphics_queue.waitIdle();
+
+    self.vk_device.freeCommandBuffers(self.command_pool, 1, @ptrCast(&command_buffer));
+}
+
+inline fn createTextureImage(self: *App) !void {
+    var read_buffer: [img.io.DEFAULT_BUFFER_SIZE]u8 = undefined;
+    var image: img.Image = try .fromFilePath(allocator, "./images/WaltahBetter.jpg", &read_buffer);
+    defer image.deinit(allocator);
+
+    const pixels = image.pixels.rgb24;
+    const PixelType = @typeInfo(@TypeOf(pixels)).pointer.child;
+    const size: vk.DeviceSize = pixels.len * @sizeOf(PixelType);
+
+    const staging_buffer, const staging_memory = try self.createBuffer(size, .{ .transfer_src_bit = true }, .{ .host_visible_bit = true, .host_coherent_bit = true });
+    _ = staging_buffer;
+
+    // Copy the pixel data
+    const data = try self.vk_device.mapMemory(staging_memory, 0, size, .{});
+    @memcpy(@as([*]PixelType, @ptrCast(data.?)), pixels);
+    self.vk_device.unmapMemory(staging_memory);
+
+    self.texture_image, self.texture_image_memory = try self.createImage(
+        // Size of the image
+        @intCast(image.width),
+        @intCast(image.width),
+        // The format of `pixels.rgb24`
+        .r8g8b8_unorm,
+        // Optimal means the memory is laid out so the shader has more effecient color access.
+        // This makes it hard or impossible to access image data outside of shader, since the colors are laid out "randomly"
+        // If you need to access image data use `.linear`
+        .optimal,
+        .{
+            .transfer_dst_bit = true,
+            .sampled_bit = true,
+        },
+        .{ .device_local_bit = true },
+    );
+}
+
+fn createImage(
+    self: *App,
+    width: u32,
+    height: u32,
+    format: vk.Format,
+    tiling: vk.ImageTiling,
+    usage: vk.ImageUsageFlags,
+    properties: vk.MemoryPropertyFlags,
+) !struct { vk.Image, vk.DeviceMemory } {
+    const image_info: vk.ImageCreateInfo = .{
+        // 2D image
+        .image_type = .@"2d",
+        .extent = .{
+            .width = width,
+            .height = height,
+            .depth = 1,
+        },
+        // No Mip mapping
+        .mip_levels = 1,
+        // Not really sure what this means
+        .array_layers = 1,
+        .format = format,
+        .tiling = tiling,
+        // The image isn't layed out optimally already, if it was we could tell Vulkan it was `preinitialized`
+        .initial_layout = .undefined,
+        .usage = usage,
+        .sharing_mode = .exclusive,
+        // not sure, something with images that are attachments
+        .samples = .{ .@"1_bit" = true },
+    };
+    const image = try self.vk_device.createImage(&image_info, null);
+
+    const mem_requirements = self.vk_device.getImageMemoryRequirements(image);
+    const alloc_info: vk.MemoryAllocateInfo = .{
+        .allocation_size = mem_requirements.size,
+        .memory_type_index = try self.findMemoryType(mem_requirements.memory_type_bits, properties),
+    };
+
+    const memory = try self.vk_device.allocateMemory(&alloc_info, null);
+    try self.vk_device.bindImageMemory(image, memory, 0);
+
+    return .{ image, memory };
+}
+
+fn createDescriptorSets(self: *App) !void {
+    const layouts: []const vk.DescriptorSetLayout = &.{ self.descriptor_set_layout, self.descriptor_set_layout };
     assert(layouts.len == max_frames_in_flight);
 
     const alloc_info: vk.DescriptorSetAllocateInfo = .{
@@ -435,21 +574,8 @@ fn createVertexBuffer(self: *App) !void {
 }
 
 fn copyBuffer(self: *App, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) !void {
-    const alloc_info: vk.CommandBufferAllocateInfo = .{
-        .command_pool = self.transfer_command_pool,
-        .command_buffer_count = 1,
-        .level = .primary,
-    };
-
-    var command_buffer: vk.CommandBuffer = undefined;
-    try self.vk_device.allocateCommandBuffers(&alloc_info, @ptrCast(&command_buffer));
-
+    const command_buffer = try self.beginSingleTimeCommands();
     const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
-
-    const begin_info: vk.CommandBufferBeginInfo = .{ .flags = .{
-        .one_time_submit_bit = true,
-    } };
-    try cmd.beginCommandBuffer(&begin_info);
 
     const copy_region: vk.BufferCopy = .{
         .dst_offset = 0,
@@ -458,27 +584,18 @@ fn copyBuffer(self: *App, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) !
     };
     cmd.copyBuffer(src, dst, 1, @ptrCast(&copy_region));
 
-    try cmd.endCommandBuffer();
-
-    const submit_info: vk.SubmitInfo = .{
-        .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast(&command_buffer),
-    };
-    try self.transfer_queue.submit(1, @ptrCast(&submit_info), .null_handle);
-    try self.transfer_queue.waitIdle();
-
-    self.vk_device.freeCommandBuffers(self.transfer_command_pool, 1, @ptrCast(&command_buffer));
+    try self.endSingleTimeCommands(command_buffer);
 }
 
-fn createBuffer(self: *App, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) !meta.Tuple(&.{ vk.Buffer, vk.DeviceMemory }) {
+fn createBuffer(self: *App, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) !struct { vk.Buffer, vk.DeviceMemory } {
     const indices = try self.findQueueFamilies(self.vk_physical);
-    const multiple_queues = indices.graphics_family == indices.transfer_family;
+    const single_queue = indices.graphics_family == indices.transfer_family;
     const buffer_info: vk.BufferCreateInfo = .{
         .size = size,
         .usage = usage,
-        .sharing_mode = if (multiple_queues) .concurrent else .exclusive,
-        .queue_family_index_count = if (multiple_queues) 1 else 2,
-        .p_queue_family_indices = if (multiple_queues) &.{indices.graphics_family.?} else &.{ indices.graphics_family.?, indices.transfer_family.? },
+        .sharing_mode = if (single_queue) .exclusive else .concurrent,
+        .queue_family_index_count = if (single_queue) 1 else 2,
+        .p_queue_family_indices = if (single_queue) &.{indices.graphics_family.?} else &.{ indices.graphics_family.?, indices.transfer_family.? },
     };
 
     const buffer = try self.vk_device.createBuffer(&buffer_info, null);
@@ -499,7 +616,12 @@ fn createBuffer(self: *App, size: vk.DeviceSize, usage: vk.BufferUsageFlags, pro
 fn findMemoryType(self: *App, type_filter: u32, properties: vk.MemoryPropertyFlags) error{NoSuitableMemoryType}!u32 {
     const mem_properties = self.vk_instance.getPhysicalDeviceMemoryProperties(self.vk_physical);
     for (0..mem_properties.memory_type_count) |i| {
-        if ((type_filter & (@as(u32, 1) << @intCast(i))) != 0 and mem_properties.memory_types[i].property_flags.contains(properties)) {
+        const type_bit: u32 = @as(u32, 1) << @intCast(i);
+        const memory_type_in_filter = type_filter & type_bit != 0;
+
+        const memory_type_has_properties = mem_properties.memory_types[i].property_flags.contains(properties);
+
+        if (memory_type_in_filter and memory_type_has_properties) {
             return @intCast(i);
         }
     }

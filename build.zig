@@ -21,6 +21,8 @@ pub fn build(b: *std.Build) void {
 
     const vulkan = b.dependency("vulkan", .{
         .registry = b.path("vulkan/vk.xml"),
+        .target = target,
+        .optimize = optimize,
     }).module("vulkan-zig");
     exe.root_module.addImport("vulkan", vulkan);
 
@@ -29,13 +31,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .x11 = true,
         .wayland = true,
-        .shared = true,
     });
     exe.root_module.addImport("glfw", glfw.module("root"));
 
     if (target.result.os.tag != .emscripten) {
         exe.linkLibrary(glfw.artifact("glfw"));
     }
+
+    const zigimg_dependency = b.dependency("zigimg", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.root_module.addImport("zigimg", zigimg_dependency.module("zigimg"));
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
