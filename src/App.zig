@@ -313,20 +313,45 @@ fn copyBufferToImage(self: *App, buffer: vk.Buffer, image: vk.Image, width: u32,
     const command_buffer = try self.beginSingleTimeCommands();
     const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
 
-    const region: vk.BufferImageCopy = .{ .buffer_offset = 0, .buffer_row_length = 0, .buffer_image_height = 0,
-        .image_subresource = .{ .mip_level = 0, .layer_count = 1, .aspect_mask = .{ .color_bit = true }, .base_array_layer = 0, },
-        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
-        .image_extent = .{ .width = width, .height = height, .depth = 1, }
-    };
+    const region: vk.BufferImageCopy = .{ .buffer_offset = 0, .buffer_row_length = 0, .buffer_image_height = 0, .image_subresource = .{
+        .mip_level = 0,
+        .layer_count = 1,
+        .aspect_mask = .{ .color_bit = true },
+        .base_array_layer = 0,
+    }, .image_offset = .{ .x = 0, .y = 0, .z = 0 }, .image_extent = .{
+        .width = width,
+        .height = height,
+        .depth = 1,
+    } };
 
     cmd.copyBufferToImage(buffer, image, .transfer_dst_optimal, 1, @ptrCast(&region));
 
-    self.endSingleTimeCommands(command_buffer);
+    try self.endSingleTimeCommands(command_buffer);
 }
 
 fn transitionImageLayout(self: *App, image: vk.Image, format: vk.Format, old_layout: vk.ImageLayout, new_layout: vk.ImageLayout) !void {
+    _ = format;
+
     const command_buffer = try self.beginSingleTimeCommands();
     const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
+
+    const src_access_mask, const dst_access_mask, const src_stage, const dst_stage = blk: {
+        if (old_layout == .undefined and new_layout == .transfer_dst_optimal) {
+            break :blk .{
+                vk.AccessFlags{}, // non specific access
+                vk.AccessFlags{ .transfer_write_bit = true }, // The access needs to have transfer write, as it will be used for transfer destination
+                vk.PipelineStageFlags{ .top_of_pipe_bit = true }, // The pipeline stage is top, because it hasn't been used before
+                vk.PipelineStageFlags{ .transfer_bit = true }, // The destination pipeline stage is transfer
+            };
+        } else if (old_layout == .transfer_dst_optimal and new_layout == .shader_read_only_optimal) {
+            break :blk .{
+                vk.AccessFlags{ .transfer_write_bit = true }, // The access was transfer write, as the image has just been written to
+                vk.AccessFlags{ .shader_read_bit = true }, // The access flags become shader read, as the image will be used in fragment shader
+                vk.PipelineStageFlags{ .transfer_bit = true }, // The pipeline has just been in the transfer stage
+                vk.PipelineStageFlags{ .fragment_shader_bit = true }, // The image will next be used during the fragment shader
+            };
+        } else return error.InvalidLayoutTransition;
+    };
 
     const barrier: vk.ImageMemoryBarrier = .{
         .old_layout = old_layout,
@@ -341,11 +366,11 @@ fn transitionImageLayout(self: *App, image: vk.Image, format: vk.Format, old_lay
             .layer_count = 1,
             .level_count = 1,
         },
-        .src_access_mask = 0, // todo
-        .dst_access_mask = 0, // todo
+        .src_access_mask = src_access_mask,
+        .dst_access_mask = dst_access_mask,
     };
 
-    cmd.pipelineBarrier(.{}, .{}, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
+    cmd.pipelineBarrier(src_stage, dst_stage, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
 
     try self.endSingleTimeCommands(command_buffer);
 }
@@ -384,12 +409,12 @@ inline fn createTextureImage(self: *App) !void {
     var image: img.Image = try .fromFilePath(allocator, "./images/WaltahBetter.jpg", &read_buffer);
     defer image.deinit(allocator);
 
-    const pixels = image.pixels.rgb24;
+    try image.convert(allocator, .rgba32);
+    const pixels = image.pixels.rgba32;
     const PixelType = @typeInfo(@TypeOf(pixels)).pointer.child;
     const size: vk.DeviceSize = pixels.len * @sizeOf(PixelType);
 
     const staging_buffer, const staging_memory = try self.createBuffer(size, .{ .transfer_src_bit = true }, .{ .host_visible_bit = true, .host_coherent_bit = true });
-    _ = staging_buffer;
 
     // Copy the pixel data
     const data = try self.vk_device.mapMemory(staging_memory, 0, size, .{});
@@ -400,8 +425,8 @@ inline fn createTextureImage(self: *App) !void {
         // Size of the image
         @intCast(image.width),
         @intCast(image.width),
-        // The format of `pixels.rgb24`
-        .r8g8b8_unorm,
+        // The format of `pixels.rgba24`
+        .r8g8b8a8_unorm,
         // Optimal means the memory is laid out so the shader has more effecient color access.
         // This makes it hard or impossible to access image data outside of shader, since the colors are laid out "randomly"
         // If you need to access image data use `.linear`
@@ -412,6 +437,13 @@ inline fn createTextureImage(self: *App) !void {
         },
         .{ .device_local_bit = true },
     );
+
+    try self.transitionImageLayout(self.texture_image, .r8g8b8a8_unorm, .undefined, .transfer_dst_optimal);
+    try self.copyBufferToImage(staging_buffer, self.texture_image, @intCast(image.width), @intCast(image.width));
+    try self.transitionImageLayout(self.texture_image, .r8g8b8a8_unorm, .transfer_dst_optimal, .shader_read_only_optimal);
+
+    self.vk_device.destroyBuffer(staging_buffer, null);
+    self.vk_device.freeMemory(staging_memory, null);
 }
 
 fn createImage(
@@ -1309,6 +1341,9 @@ fn updateUniformBuffer(self: *App, current_image: u32) !void {
 fn cleanup(self: *App) void {
     try self.cleanupSwapChain();
 
+    self.vk_device.destroyImage(self.texture_image, null);
+    self.vk_device.freeMemory(self.texture_image_memory, null);
+
     for (self.uniform_buffers, self.uniform_buffer_memories) |buffer, memory| {
         self.vk_device.destroyBuffer(buffer, null);
         self.vk_device.freeMemory(memory, null);
@@ -1463,7 +1498,7 @@ fn querySwapChainSupport(self: *const App, device: vk.PhysicalDevice) !SwapChain
     };
 }
 
-fn chooseSwapSurfaceFormat(_: *const App, formats: []const vk.SurfaceFormatKHR) vk.SurfaceFormatKHR {
+fn chooseSwapSurfaceFormat(_: App, formats: []const vk.SurfaceFormatKHR) vk.SurfaceFormatKHR {
     for (formats) |format| {
         if (format.format == .b8g8r8a8_srgb and format.color_space == .srgb_nonlinear_khr) {
             return format;
@@ -1473,7 +1508,7 @@ fn chooseSwapSurfaceFormat(_: *const App, formats: []const vk.SurfaceFormatKHR) 
     return formats[0];
 }
 
-fn chooseSwapPresentMode(_: *const App, present_modes: []const vk.PresentModeKHR) vk.PresentModeKHR {
+fn chooseSwapPresentMode(_: App, present_modes: []const vk.PresentModeKHR) vk.PresentModeKHR {
     for (present_modes) |present_mode| {
         // Tripple buffering vsync
         if (present_mode == .mailbox_khr)
