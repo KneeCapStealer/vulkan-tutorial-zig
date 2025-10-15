@@ -309,6 +309,21 @@ fn initVulkan(self: *App) !void {
     try self.createSyncObjects();
 }
 
+fn copyBufferToImage(self: *App, buffer: vk.Buffer, image: vk.Image, width: u32, height: u32) !void {
+    const command_buffer = try self.beginSingleTimeCommands();
+    const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
+
+    const region: vk.BufferImageCopy = .{ .buffer_offset = 0, .buffer_row_length = 0, .buffer_image_height = 0,
+        .image_subresource = .{ .mip_level = 0, .layer_count = 1, .aspect_mask = .{ .color_bit = true }, .base_array_layer = 0, },
+        .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+        .image_extent = .{ .width = width, .height = height, .depth = 1, }
+    };
+
+    cmd.copyBufferToImage(buffer, image, .transfer_dst_optimal, 1, @ptrCast(&region));
+
+    self.endSingleTimeCommands(command_buffer);
+}
+
 fn transitionImageLayout(self: *App, image: vk.Image, format: vk.Format, old_layout: vk.ImageLayout, new_layout: vk.ImageLayout) !void {
     const command_buffer = try self.beginSingleTimeCommands();
     const cmd: vk.CommandBufferProxy = .init(command_buffer, &self.device_wrapper);
