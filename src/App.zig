@@ -128,6 +128,8 @@ descriptor_sets: []vk.DescriptorSet,
 
 texture_image: vk.Image,
 texture_image_memory: vk.DeviceMemory,
+texture_image_view: vk.ImageView,
+texture_sampler: vk.Sampler,
 
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
@@ -218,6 +220,8 @@ pub fn init() App {
 
         .texture_image = .null_handle,
         .texture_image_memory = .null_handle,
+        .texture_image_view = .null_handle,
+        .texture_sampler = .null_handle,
     };
 }
 
@@ -300,6 +304,8 @@ fn initVulkan(self: *App) !void {
     try self.createFramebuffers();
     try self.createCommandPool();
     try self.createTextureImage();
+    try self.createTextureImageView();
+    try self.createTextureSampler();
     try self.createVertexBuffer();
     try self.createIndexBuffer();
     try self.createUniformBuffers();
@@ -307,6 +313,61 @@ fn initVulkan(self: *App) !void {
     try self.createDescriptorSets();
     try self.createCommandBuffers();
     try self.createSyncObjects();
+}
+
+fn createTextureSampler(self: *App) !void {
+    const physical_device_properties = self.vk_instance.getPhysicalDeviceProperties(self.vk_physical);
+    const sampler_info: vk.SamplerCreateInfo = .{
+        // Bilinear vs no filtering
+        // Basically if we want to just use each pixel in the texture
+        // or if we want to blur between the pixels if there are not enough
+        .mag_filter = .linear,
+        .min_filter = .linear,
+        // UV texture addressing move pr. axis.
+        // Repeat the texture, or mirror repeat the texture and so on...
+        // x axis
+        .address_mode_u = .repeat,
+        // y axis
+        .address_mode_v = .repeat,
+        // z axis
+        .address_mode_w = .repeat,
+        .anisotropy_enable = .true,
+        .max_anisotropy = physical_device_properties.limits.max_sampler_anisotropy,
+        .border_color = .int_opaque_black,
+        // Made texture cordinates go in range: [0, 1], instead of [0, texWidth] and [0, texHeight]
+        .unnormalized_coordinates = .false,
+        // Can be used for shadowmap antialiasing
+        .compare_enable = .false,
+        .compare_op = .always,
+        .mipmap_mode = .linear,
+        .mip_lod_bias = 0,
+        .max_lod = 0,
+        .min_lod = 0,
+    };
+
+    self.texture_sampler = try self.vk_device.createSampler(&sampler_info, null);
+}
+
+fn createImageView(self: *App, image: vk.Image, format: vk.Format) !vk.ImageView {
+    const view_info: vk.ImageViewCreateInfo = .{
+        .image = image,
+        .format = format,
+        .view_type = .@"2d",
+        .components = .{ .a = .identity, .b = .identity, .g = .identity, .r = .identity },
+        .subresource_range = .{
+            .aspect_mask = .{ .color_bit = true },
+            .base_mip_level = 0,
+            .base_array_layer = 0,
+            .layer_count = 1,
+            .level_count = 1,
+        },
+    };
+
+    return try self.vk_device.createImageView(&view_info, null);
+}
+
+fn createTextureImageView(self: *App) !void {
+    self.texture_image_view = try self.createImageView(self.texture_image, .r8g8b8a8_unorm);
 }
 
 fn copyBufferToImage(self: *App, buffer: vk.Buffer, image: vk.Image, width: u32, height: u32) !void {
@@ -993,26 +1054,7 @@ fn createImageViews(self: *App) !void {
     self.swap_chain_image_views = try allocator.alloc(vk.ImageView, self.swap_chain_images.len);
 
     for (self.swap_chain_images, 0..) |image, i| {
-        const create_info: vk.ImageViewCreateInfo = .{
-            .image = image,
-            .view_type = .@"2d",
-            .format = self.swap_chain_image_format,
-            .components = .{
-                .a = .identity,
-                .b = .identity,
-                .g = .identity,
-                .r = .identity,
-            },
-            .subresource_range = .{
-                .aspect_mask = .{ .color_bit = true },
-                .base_mip_level = 0,
-                .layer_count = 1,
-                .level_count = 1,
-                .base_array_layer = 0,
-            },
-        };
-
-        self.swap_chain_image_views[i] = try self.vk_device.createImageView(&create_info, null);
+        self.swap_chain_image_views[i] = try self.createImageView(image, self.swap_chain_image_format);
     }
 }
 
@@ -1152,7 +1194,9 @@ fn createLogicalDevice(self: *App) !void {
     }
 
     // Activate no features for now
-    const device_features: vk.PhysicalDeviceFeatures = .{};
+    const device_features: vk.PhysicalDeviceFeatures = .{
+        .sampler_anisotropy = .true,
+    };
     const create_info: vk.DeviceCreateInfo = .{
         .p_queue_create_infos = queue_create_infos.items.ptr,
         .queue_create_info_count = @intCast(queue_create_infos.items.len),
@@ -1216,7 +1260,9 @@ fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
         break :blk swap_chain_details.formats.len != 0 and swap_chain_details.present_modes.len != 0;
     };
 
-    return is_discrete and queue_families.isComplete() and extensions_supported and swap_chain_adequate;
+    const features = self.vk_instance.getPhysicalDeviceFeatures(device);
+
+    return is_discrete and queue_families.isComplete() and extensions_supported and swap_chain_adequate and features.sampler_anisotropy == .true;
 }
 
 fn checkDeviceExtensionSupport(self: *App, device: vk.PhysicalDevice) !bool {
@@ -1341,6 +1387,8 @@ fn updateUniformBuffer(self: *App, current_image: u32) !void {
 fn cleanup(self: *App) void {
     try self.cleanupSwapChain();
 
+    self.vk_device.destroySampler(self.texture_sampler, null);
+    self.vk_device.destroyImageView(self.texture_image_view, null);
     self.vk_device.destroyImage(self.texture_image, null);
     self.vk_device.freeMemory(self.texture_image_memory, null);
 
