@@ -570,30 +570,55 @@ fn createDescriptorSets(self: *App) !void {
             .offset = 0,
             .range = @sizeOf(UniformBufferObject),
         };
-        const descriptor_write: vk.WriteDescriptorSet = .{
-            .dst_set = self.descriptor_sets[i],
-            .dst_binding = 0,
-            .dst_array_element = 0,
-            .descriptor_type = .uniform_buffer,
-            .descriptor_count = 1,
-            .p_buffer_info = @ptrCast(&buffer_info),
-            // These are irelevant but don't accept nullptrs ???
-            .p_image_info = @ptrFromInt(8),
-            .p_texel_buffer_view = @ptrFromInt(8),
+        const image_info: vk.DescriptorImageInfo = .{
+            .image_layout = .shader_read_only_optimal,
+            .image_view = self.texture_image_view,
+            .sampler = self.texture_sampler,
+        };
+        const descriptor_writes: [2]vk.WriteDescriptorSet = .{
+            .{
+                .dst_set = self.descriptor_sets[i],
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_type = .uniform_buffer,
+                .descriptor_count = 1,
+                .p_buffer_info = @ptrCast(&buffer_info),
+                // These are irelevant but don't accept nullptrs ???
+                .p_image_info = @ptrFromInt(8),
+                .p_texel_buffer_view = @ptrFromInt(8),
+            },
+            .{
+                .dst_set = self.descriptor_sets[i],
+                .dst_binding = 1,
+                .dst_array_element = 0,
+                .descriptor_type = .combined_image_sampler,
+                .descriptor_count = 1,
+                .p_buffer_info = undefined,
+                // Now we are using images
+                .p_image_info = @ptrCast(&image_info),
+                .p_texel_buffer_view = undefined,
+            },
         };
 
-        self.vk_device.updateDescriptorSets(1, @ptrCast(&descriptor_write), 0, null);
+        self.vk_device.updateDescriptorSets(descriptor_writes.len, &descriptor_writes, 0, null);
     }
 }
 
 fn createDescriptorPool(self: *App) !void {
-    const pool_size: vk.DescriptorPoolSize = .{
-        .descriptor_count = max_frames_in_flight,
-        .type = .uniform_buffer,
+    const pool_sizes: [2]vk.DescriptorPoolSize = .{
+        .{
+            .descriptor_count = max_frames_in_flight,
+            .type = .uniform_buffer,
+        },
+        .{
+            .descriptor_count = max_frames_in_flight,
+            .type = .combined_image_sampler,
+        },
     };
+
     const pool_info: vk.DescriptorPoolCreateInfo = .{
-        .pool_size_count = 1,
-        .p_pool_sizes = @ptrCast(&pool_size),
+        .pool_size_count = pool_sizes.len,
+        .p_pool_sizes = &pool_sizes,
         .max_sets = max_frames_in_flight,
     };
 
@@ -624,9 +649,19 @@ fn createDescriptorSetLayout(self: *App) !void {
         .p_immutable_samplers = null,
     };
 
+    const sampler_layout_binding: vk.DescriptorSetLayoutBinding = .{
+        .binding = 1,
+        .descriptor_type = .combined_image_sampler,
+        .descriptor_count = 1,
+        .stage_flags = .{ .fragment_bit = true },
+        .p_immutable_samplers = null,
+    };
+
+    const bindings: []const vk.DescriptorSetLayoutBinding = &.{ ubo_layout_binding, sampler_layout_binding };
+
     const layout_info: vk.DescriptorSetLayoutCreateInfo = .{
-        .binding_count = 1,
-        .p_bindings = @ptrCast(&ubo_layout_binding),
+        .binding_count = bindings.len,
+        .p_bindings = bindings.ptr,
     };
 
     self.descriptor_set_layout = try self.vk_device.createDescriptorSetLayout(&layout_info, null);
