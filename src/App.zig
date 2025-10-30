@@ -373,7 +373,7 @@ fn createImageView(self: *App, image: vk.Image, format: vk.Format) !vk.ImageView
 }
 
 fn createTextureImageView(self: *App) !void {
-    self.texture_image_view = try self.createImageView(self.texture_image, .r8g8b8a8_unorm);
+    self.texture_image_view = try self.createImageView(self.texture_image, .r8g8b8a8_srgb);
 }
 
 fn copyBufferToImage(self: *App, buffer: vk.Buffer, image: vk.Image, width: u32, height: u32) !void {
@@ -493,7 +493,7 @@ inline fn createTextureImage(self: *App) !void {
         @intCast(image.width),
         @intCast(image.width),
         // The format of `pixels.rgba24`
-        .r8g8b8a8_unorm,
+        .r8g8b8a8_srgb,
         // Optimal means the memory is laid out so the shader has more effecient color access.
         // This makes it hard or impossible to access image data outside of shader, since the colors are laid out "randomly"
         // If you need to access image data use `.linear`
@@ -505,9 +505,9 @@ inline fn createTextureImage(self: *App) !void {
         .{ .device_local_bit = true },
     );
 
-    try self.transitionImageLayout(self.texture_image, .r8g8b8a8_unorm, .undefined, .transfer_dst_optimal);
+    try self.transitionImageLayout(self.texture_image, .r8g8b8a8_srgb, .undefined, .transfer_dst_optimal);
     try self.copyBufferToImage(staging_buffer, self.texture_image, @intCast(image.width), @intCast(image.width));
-    try self.transitionImageLayout(self.texture_image, .r8g8b8a8_unorm, .transfer_dst_optimal, .shader_read_only_optimal);
+    try self.transitionImageLayout(self.texture_image, .r8g8b8a8_srgb, .transfer_dst_optimal, .shader_read_only_optimal);
 
     self.vk_device.destroyBuffer(staging_buffer, null);
     self.vk_device.freeMemory(staging_memory, null);
