@@ -16,6 +16,7 @@ const Mat4 = math.Mat4;
 const Vertex = struct {
     pos: Vec2,
     color: Vec3,
+    tex_coord: Vec2,
 
     fn getBindingDescription() vk.VertexInputBindingDescription {
         const binding_description: vk.VertexInputBindingDescription = .{
@@ -27,8 +28,8 @@ const Vertex = struct {
         return binding_description;
     }
 
-    fn getAttributeDescriptions() [2]vk.VertexInputAttributeDescription {
-        return [2]vk.VertexInputAttributeDescription{ .{
+    fn getAttributeDescriptions() [3]vk.VertexInputAttributeDescription {
+        return [_]vk.VertexInputAttributeDescription{ .{
             .binding = 0,
             .location = 0,
             .format = .r32g32_sfloat,
@@ -38,6 +39,11 @@ const Vertex = struct {
             .location = 1,
             .format = .r32g32b32_sfloat,
             .offset = @offsetOf(Vertex, "color"),
+        }, .{
+            .binding = 0,
+            .location = 2,
+            .format = .r32g32_sfloat,
+            .offset = @offsetOf(Vertex, "tex_coord"),
         } };
     }
 };
@@ -196,10 +202,10 @@ pub fn init() App {
         .framebuffer_resized = false,
 
         .verticies = &.{
-            Vertex{ .pos = .{ .x = -0.5, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = -0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 } },
-            Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 } },
+            Vertex{ .pos = .{ .x = -0.5, .y = -0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 }, .tex_coord = .{ .x = 1, .y = 0 } },
+            Vertex{ .pos = .{ .x = 0.5, .y = -0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 }, .tex_coord = .{ .x = 0, .y = 0 } },
+            Vertex{ .pos = .{ .x = 0.5, .y = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 }, .tex_coord = .{ .x = 0, .y = 1 } },
+            Vertex{ .pos = .{ .x = -0.5, .y = 0.5 }, .color = .{ .x = 1, .y = 1, .z = 1 }, .tex_coord = .{ .x = 1, .y = 1 } },
         },
         .vertex_buffer = .null_handle,
         .vertex_buffer_memory = .null_handle,
