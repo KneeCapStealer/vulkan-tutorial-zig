@@ -2,3 +2,7 @@
 zig-out/
 
 vulkan/
+
+shaders/out
+
+vk_layer_settings.txt
