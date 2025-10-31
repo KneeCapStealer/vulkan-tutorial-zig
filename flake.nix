@@ -54,7 +54,7 @@
 
           packages.waltuh = pkgs.stdenv.mkDerivation (finalAttrs: {
             pname = "waltuh";
-            version = "69.420.1000000";
+            version = "69.420.1000001";
 
             src = pkgs.lib.cleanSource ./.;
 

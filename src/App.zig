@@ -1300,7 +1300,6 @@ fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
     const properties = self.vk_instance.getPhysicalDeviceProperties(device);
     // const features = self.vk_instance.getPhysicalDeviceFeatures(device);
 
-    const is_discrete = properties.device_type == .discrete_gpu;
     const queue_families = try self.findQueueFamilies(device);
     const extensions_supported = try self.checkDeviceExtensionSupport(device);
 
