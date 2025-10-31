@@ -18,6 +18,16 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
+    b.installDirectory(.{
+        .source_dir = b.path("images"),
+        .install_dir = .prefix,
+        .install_subdir = "images",
+    });
+    b.installDirectory(.{
+        .source_dir = b.path("shaders/out"),
+        .install_dir = .prefix,
+        .install_subdir = "shaders/out",
+    });
 
     const vulkan = b.dependency("vulkan", .{
         .registry = b.path("vulkan/vk.xml"),

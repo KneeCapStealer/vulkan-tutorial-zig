@@ -472,8 +472,17 @@ inline fn endSingleTimeCommands(self: *App, command_buffer: vk.CommandBuffer) !v
 
 inline fn createTextureImage(self: *App) !void {
     var read_buffer: [img.io.DEFAULT_BUFFER_SIZE]u8 = undefined;
-    var image: img.Image = try .fromFilePath(allocator, "./images/WaltahBetter.jpg", &read_buffer);
+    const self_path = try std.fs.selfExeDirPathAlloc(allocator);
+    const self_dir = try std.fs.openDirAbsolute(self_path, .{ .access_sub_paths = true });
+    allocator.free(self_path);
+
+    const image_path = try self_dir.realpathAlloc(allocator, "../images/WaltahBetter.jpg");
+
+    std.debug.print("image path: {s}\n", .{image_path});
+
+    var image: img.Image = try .fromFilePath(allocator, image_path, &read_buffer);
     defer image.deinit(allocator);
+    allocator.free(image_path);
 
     try image.convert(allocator, .rgba32);
     const pixels = image.pixels.rgba32;
@@ -928,13 +937,18 @@ fn createRenderPass(self: *App) !void {
 }
 
 fn createGraphicsPipeline(self: *App) !void {
-    const vertex_shader = try std.fs.cwd().openFile("shaders/out/vert.spv", std.fs.File.OpenFlags{
+    const self_path = try std.fs.selfExeDirPathAlloc(allocator);
+    std.debug.print("self path: {s}\n", .{self_path});
+    const self_dir = try std.fs.openDirAbsolute(self_path, .{ .access_sub_paths = true });
+    allocator.free(self_path);
+
+    const vertex_shader = try self_dir.openFile("../shaders/out/vert.spv", std.fs.File.OpenFlags{
         .lock = .shared,
         .mode = .read_only,
     });
 
     errdefer vertex_shader.close();
-    const fragment_shader = try std.fs.cwd().openFile("shaders/out/frag.spv", std.fs.File.OpenFlags{
+    const fragment_shader = try self_dir.openFile("../shaders/out/frag.spv", std.fs.File.OpenFlags{
         .lock = .shared,
         .mode = .read_only,
     });
