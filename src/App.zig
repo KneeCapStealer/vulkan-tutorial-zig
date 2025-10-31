@@ -1297,7 +1297,7 @@ fn pickPhysicalDevice(self: *App) !void {
 /// Determines if a device can be used for the application
 /// Returns true if the device has all the required features, and false if the device can't run the program
 fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
-    const properties = self.vk_instance.getPhysicalDeviceProperties(device);
+    // const properties = self.vk_instance.getPhysicalDeviceProperties(device);
     // const features = self.vk_instance.getPhysicalDeviceFeatures(device);
 
     const queue_families = try self.findQueueFamilies(device);
@@ -1315,7 +1315,7 @@ fn isDeviceSuitable(self: *App, device: vk.PhysicalDevice) !bool {
 
     const features = self.vk_instance.getPhysicalDeviceFeatures(device);
 
-    return is_discrete and queue_families.isComplete() and extensions_supported and swap_chain_adequate and features.sampler_anisotropy == .true;
+    return queue_families.isComplete() and extensions_supported and swap_chain_adequate and features.sampler_anisotropy == .true;
 }
 
 fn checkDeviceExtensionSupport(self: *App, device: vk.PhysicalDevice) !bool {
