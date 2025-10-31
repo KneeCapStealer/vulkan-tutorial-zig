@@ -1,18 +1,8 @@
 {
   description = "Vulkan tutorial done in zig";
 
-  nixConfig = {
-    extra-substituters = [
-      "https://chaotic-nyx.cachix.org/"
-    ];
-    extra-trusted-public-keys = [
-      "chaotic-nyx.cachix.org-1:HfnXSw4pj95iI/n17rIDy40agHj12WfF+Gqk6SonIT8="
-    ];
-  };
-
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
-    chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
   };
 
@@ -23,29 +13,32 @@
 
       perSystem =
         { system, pkgs, ... }:
-        {
-          # Use chaotic overlay
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            overlays = [ inputs.chaotic.overlays.default ];
-          };
-
+        rec {
           formatter = pkgs.nixfmt-rfc-style;
 
           devShells.default = pkgs.mkShell {
             packages =
-              with pkgs.vulkanPackages_latest;
+              with pkgs;
               [
                 vulkan-headers
                 vulkan-loader
                 vulkan-validation-layers
                 glslang
-              ]
-              ++ (with pkgs; [
                 zig
                 lldb
-                pkgs.xorg.libX11
-              ]);
+
+                wayland
+                wayland-protocols
+
+                libxkbcommon
+                xorg.libX11
+                xorg.libXrandr
+                xorg.libXinerama
+                xorg.libXcursor
+                xorg.libXi
+                xorg.libXext
+                xorg.libXxf86vm
+              ];
 
             shellHook = ''
               mkdir -p ./vulkan
@@ -57,6 +50,59 @@
               echo 'khronos_validation.enables = VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED' > ./vk_layer_settings.txt
             '';
           };
+
+
+          packages.waltuh = pkgs.stdenv.mkDerivation (finalAttrs: {
+            pname = "waltuh";
+            version = "69.420.1000000";
+
+            src = pkgs.lib.cleanSource ./.;
+
+            nativeBuildInputs = with pkgs; [
+              zig
+              zig.hook
+              vulkan-headers
+              glslang
+              makeWrapper
+            ];
+
+            buildInputs = with pkgs; [
+              vulkan-loader
+
+              wayland
+              wayland-protocols
+
+              libxkbcommon
+              xorg.libX11
+            ];
+            
+            deps = pkgs.callPackage ./build.zig.zon.nix {
+              name = "${finalAttrs.pname}-${finalAttrs.version}-deps";
+            };
+            strictDeps = true;
+
+            zigBuildFlags = [
+              "--system"
+              "${finalAttrs.deps}"
+            ];
+
+            configurePhase = ''
+              mkdir -p vulkan
+              cp -f ${pkgs.vulkan-headers}/share/vulkan/registry/vk.xml ./vulkan
+
+              substituteInPlace compile_shaders.sh \
+                --replace-fail '/usr/bin/env sh' '${pkgs.bash}/bin/sh'
+              ./compile_shaders.sh
+            '';
+
+            postInstall = ''
+              wrapProgram $out/bin/waltuh \
+                --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath finalAttrs.buildInputs}
+            '';
+          });
+
+
+          packages.default = packages.waltuh;
         };
     };
 }

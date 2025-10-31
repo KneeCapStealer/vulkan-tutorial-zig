@@ -232,7 +232,6 @@ pub fn init() App {
 }
 
 pub fn run(self: *App) !void {
-    try glfw.initHint(.platform, glfw.Platform.x11);
     try glfw.init();
 
     try self.initWindow();

@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const exe = b.addExecutable(.{
-        .name = "vulkanTutorial",
+        .name = "waltuh",
         .root_module = exe_mod,
     });
     b.installArtifact(exe);

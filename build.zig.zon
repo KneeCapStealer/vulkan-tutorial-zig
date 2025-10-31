@@ -6,7 +6,7 @@
     //
     // It is redundant to include "zig" in this name because it is already
     // within the Zig package namespace.
-    .name = .vulkanTutorial,
+    .name = .Waltuh,
 
     // This is a [Semantic Version](https://semver.org/).
     // In a future version of Zig it will be used for package deduplication.
@@ -24,7 +24,7 @@
     // original project's identity. Thus it is recommended to leave the comment
     // on the following line intact, so that it shows up in code reviews that
     // modify the field.
-    .fingerprint = 0xcadb09f8709ab168, // Changing this has security and trust implications.
+    .fingerprint =  0x37322bff72c27b94, // Changing this has security and trust implications.
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
@@ -37,16 +37,16 @@
     // internet connectivity.
     .dependencies = .{
         .vulkan = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/zig-0.15-compat.tar.gz",
+            .url = "https://github.com/Snektron/vulkan-zig/archive/f879074293f0e2f718c93fd19cc0a96260a3aa52.tar.gz",
             .hash = "vulkan-0.0.0-r7Ytx6hBAwBUnt0XA-uOkR2hda4fAHFhQITNTgJpnFkY",
         },
         .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw#3a3f0d2c040902c717402d58e96ae1553bee550d",
-            .hash = "zglfw-0.10.0-dev-zgVDNHOuIQC9B7kIg7w6a0K07ZKD_QKYf-OJ6SqiLwg1",
+            .url = "git+https://github.com/zig-gamedev/zglfw#6034a5623312c58bf5e64c1a2b686691c28575f4",
+            .hash = "zglfw-0.10.0-dev-zgVDNPKyIQCBi-wv_vxkvIQq1u0bP4D56Wszx_2mszc7",
         },
         .zigimg = .{
-            .url = "git+https://github.com/zigimg/zigimg.git#d7717b3617d58160635623fe86d4bf86065498e0",
-            .hash = "zigimg-0.1.0-8_eo2vBrFQAvZmO9NzDP85_qC5JFksuMdyI_KMMEr4bq",
+            .url = "git+https://github.com/zigimg/zigimg.git#f5783e87627cbd9e0b45fad112e9f73503914f36",
+            .hash = "zigimg-0.1.0-8_eo2vBrFQBhsrLpexdcDQY-zrlzkyFZfKuYX-Nry6KN",
         },
     },
     .paths = .{
