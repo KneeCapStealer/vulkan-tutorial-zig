@@ -88,7 +88,6 @@ vk_device: vk.DeviceProxy,
 
 graphics_queue: vk.QueueProxy,
 present_queue: vk.QueueProxy,
-transfer_queue: vk.QueueProxy,
 
 debug_messenger: vk.DebugUtilsMessengerEXT,
 
@@ -106,8 +105,6 @@ graphics_pipeline: vk.Pipeline,
 
 command_pool: vk.CommandPool,
 command_buffers: [max_frames_in_flight]vk.CommandBuffer,
-
-transfer_command_pool: vk.CommandPool,
 
 image_available_semaphores: [max_frames_in_flight]vk.Semaphore,
 render_finished_semaphores: [max_frames_in_flight]vk.Semaphore,
@@ -172,7 +169,6 @@ pub fn init() App {
 
         .graphics_queue = undefined,
         .present_queue = undefined,
-        .transfer_queue = undefined,
 
         .debug_messenger = .null_handle,
 
@@ -190,8 +186,6 @@ pub fn init() App {
 
         .command_pool = .null_handle,
         .command_buffers = command_buffers,
-
-        .transfer_command_pool = .null_handle,
 
         .image_available_semaphores = image_available_semaphores,
         .render_finished_semaphores = render_finished_semaphores,
@@ -746,13 +740,12 @@ fn copyBuffer(self: *App, src: vk.Buffer, dst: vk.Buffer, size: vk.DeviceSize) !
 
 fn createBuffer(self: *App, size: vk.DeviceSize, usage: vk.BufferUsageFlags, properties: vk.MemoryPropertyFlags) !struct { vk.Buffer, vk.DeviceMemory } {
     const indices = try self.findQueueFamilies(self.vk_physical);
-    const single_queue = indices.graphics_family == indices.transfer_family;
     const buffer_info: vk.BufferCreateInfo = .{
         .size = size,
         .usage = usage,
-        .sharing_mode = if (single_queue) .exclusive else .concurrent,
-        .queue_family_index_count = if (single_queue) 1 else 2,
-        .p_queue_family_indices = if (single_queue) &.{indices.graphics_family.?} else &.{ indices.graphics_family.?, indices.transfer_family.? },
+        .sharing_mode = .exclusive,
+        .queue_family_index_count = 1,
+        .p_queue_family_indices = &.{indices.graphics_family.?},
     };
 
     const buffer = try self.vk_device.createBuffer(&buffer_info, null);
@@ -866,12 +859,6 @@ fn createCommandPool(self: *App) !void {
         .queue_family_index = queue_families.graphics_family.?,
     };
     self.command_pool = try self.vk_device.createCommandPool(&pool_info, null);
-
-    const transfer_pool_info: vk.CommandPoolCreateInfo = .{
-        .flags = .{ .reset_command_buffer_bit = true },
-        .queue_family_index = queue_families.transfer_family.?,
-    };
-    self.transfer_command_pool = try self.vk_device.createCommandPool(&transfer_pool_info, null);
 }
 
 fn createFramebuffers(self: *App) !void {
@@ -1222,7 +1209,7 @@ fn createLogicalDevice(self: *App) !void {
     var unique_queue_families: std.ArrayList(u32) = .empty;
     defer unique_queue_families.deinit(allocator);
 
-    const all_queue_families: []const u32 = &.{ indices.present_family.?, indices.graphics_family.?, indices.transfer_family.? };
+    const all_queue_families: []const u32 = &.{ indices.present_family.?, indices.graphics_family.? };
     outer: for (all_queue_families) |family| {
         for (unique_queue_families.items) |unique| {
             if (family == unique) {
@@ -1270,10 +1257,6 @@ fn createLogicalDevice(self: *App) !void {
 
     const present_queue = self.vk_device.getDeviceQueue(indices.present_family.?, 0);
     self.present_queue = .init(present_queue, &self.device_wrapper);
-
-    const transfer_queue_index: u32 = if (indices.graphics_family.? == indices.transfer_family.?) 1 else 0;
-    const transfer_queue = self.vk_device.getDeviceQueue(indices.transfer_family.?, transfer_queue_index);
-    self.transfer_queue = .init(transfer_queue, &self.device_wrapper);
 }
 
 fn pickPhysicalDevice(self: *App) !void {
@@ -1476,7 +1459,6 @@ fn cleanup(self: *App) void {
     }
 
     self.vk_device.destroyCommandPool(self.command_pool, null);
-    self.vk_device.destroyCommandPool(self.transfer_command_pool, null);
 
     self.vk_device.destroyDevice(null);
 
@@ -1537,7 +1519,6 @@ fn getRequiredExtensions() ![]const [*:0]const u8 {
 const QueueFamilyIndices = struct {
     graphics_family: ?u32 = null,
     present_family: ?u32 = null,
-    transfer_family: ?u32 = null,
 
     pub fn isComplete(self: QueueFamilyIndices) bool {
         const fields = comptime std.meta.fieldNames(QueueFamilyIndices);
@@ -1567,10 +1548,6 @@ fn findQueueFamilies(self: *const App, device: vk.PhysicalDevice) !QueueFamilyIn
 
         if (try self.vk_instance.getPhysicalDeviceSurfaceSupportKHR(device, index, self.surface) == .true) {
             indices.present_family = index;
-        }
-
-        if (queue_family.queue_flags.transfer_bit and indices.graphics_family != index) {
-            indices.transfer_family = index;
         }
 
         if (indices.isComplete()) {
