@@ -984,15 +984,19 @@ fn createRenderPass(self: *App) !void {
         .p_depth_stencil_attachment = &depth_attachment_ref,
     };
 
-    // Wait for the color attachment output stage is available for write
     const dependency: vk.SubpassDependency = .{
+        // No subpass is started yet
         .src_subpass = vk.SUBPASS_EXTERNAL,
+        // The current subpass
         .dst_subpass = 0,
+        // Wait for these stages to be completed / ready
         .src_stage_mask = .{
             .color_attachment_output_bit = true,
             .late_fragment_tests_bit = true,
         },
         .src_access_mask = .{ .depth_stencil_attachment_write_bit = true },
+
+        // Before starting the color write and depth checking
         .dst_stage_mask = .{
             .color_attachment_output_bit = true,
             .early_fragment_tests_bit = true,
