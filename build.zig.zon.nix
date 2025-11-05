@@ -122,4 +122,13 @@ linkFarm name [
       rev = "f5783e87627cbd9e0b45fad112e9f73503914f36";
     };
   }
+  {
+    name = "obj-3.0.2-v8OfitvLAADxUf6oMHCiWxjJILklY-IMKXlwX-Pv8rKu";
+    path = fetchZigArtifact {
+      name = "obj";
+      url = "git+https://github.com/chip2n/zig-obj.git#47410383c81d24454e370ffadc0980af7abea522";
+      hash = "sha256-D1Ul2AUKgveDbKYKTmcVPoGE6FlAS470F3daSFnBGzI=";
+      rev = "47410383c81d24454e370ffadc0980af7abea522";
+    };
+  }
 ]

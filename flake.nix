@@ -17,20 +17,28 @@
           formatter = pkgs.nixfmt-rfc-style;
 
           devShells.default = pkgs.mkShell {
-            packages = with pkgs; [
-              vulkan-headers
-              vulkan-loader
-              vulkan-validation-layers
-              glslang
-              zig
-              lldb
+            packages =
+              with pkgs;
+              [
+                vulkan-headers
+                vulkan-loader
+                vulkan-validation-layers
+                glslang
+                zig
+                lldb
 
-              wayland
-              wayland-protocols
+                wayland
+                wayland-protocols
 
-              libxkbcommon
-              xorg.libX11
-            ];
+                libxkbcommon
+                xorg.libX11
+                xorg.libXrandr
+                xorg.libXinerama
+                xorg.libXcursor
+                xorg.libXi
+                xorg.libXext
+                xorg.libXxf86vm
+              ];
 
             shellHook = ''
               mkdir -p ./vulkan
@@ -43,9 +51,10 @@
             '';
           };
 
+
           packages.waltuh = pkgs.stdenv.mkDerivation (finalAttrs: {
             pname = "waltuh";
-            version = "69.420.1000001";
+            version = "69.420.1000000";
 
             src = pkgs.lib.cleanSource ./.;
 
@@ -66,7 +75,7 @@
               libxkbcommon
               xorg.libX11
             ];
-
+            
             deps = pkgs.callPackage ./build.zig.zon.nix {
               name = "${finalAttrs.pname}-${finalAttrs.version}-deps";
             };
@@ -91,6 +100,7 @@
                 --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath finalAttrs.buildInputs}
             '';
           });
+
 
           packages.default = packages.waltuh;
         };
