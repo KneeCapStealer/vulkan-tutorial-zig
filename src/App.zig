@@ -1576,7 +1576,7 @@ var start: i64 = 0;
 fn updateUniformBuffer(self: *App, current_image: u32) void {
     const time = std.time.milliTimestamp() - start;
     var ubo: UniformBufferObject = .{
-        .model = math.rotate(Mat4.identity, std.math.degreesToRadians(@as(f32, @floatFromInt(@divFloor(time, 100)))), .{ .x = 0, .y = 0, .z = 1 }),
+        .model = math.rotate(Mat4.identity, std.math.degreesToRadians(@as(f32, @floatFromInt(time)) / 1000 * 45), .{ .x = 0, .y = 0, .z = 1 }),
         .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
         .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     };
