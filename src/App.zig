@@ -7,6 +7,7 @@ const assert = std.debug.assert;
 const glfw = @import("glfw");
 const vk = @import("vulkan");
 const img = @import("zigimg");
+const obj = @import("obj");
 
 const math = @import("math.zig");
 const Vec2 = math.Vec2;
@@ -114,11 +115,11 @@ current_frame: u32,
 
 framebuffer_resized: bool,
 
-verticies: []const Vertex,
+verticies: std.ArrayList(Vertex),
 vertex_buffer: vk.Buffer,
 vertex_buffer_memory: vk.DeviceMemory,
 
-indices: []const u32,
+indices: std.ArrayList(u32),
 index_buffer: vk.Buffer,
 index_buffer_memory: vk.DeviceMemory,
 
@@ -199,24 +200,11 @@ pub fn init() App {
 
         .framebuffer_resized = false,
 
-        .verticies = &.{
-            Vertex{ .pos = .{ .x = -0.5, .y = -0.5, .z = 0.5 }, .color = .{ .x = 1, .y = 0, .z = 0 }, .tex_coord = .{ .x = 1, .y = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = -0.5, .z = 0.5 }, .color = .{ .x = 0, .y = 1, .z = 0 }, .tex_coord = .{ .x = 0, .y = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = 0.5, .z = 0.5 }, .color = .{ .x = 0, .y = 0, .z = 1 }, .tex_coord = .{ .x = 0, .y = 1 } },
-            Vertex{ .pos = .{ .x = -0.5, .y = 0.5, .z = 0.5 }, .color = .{ .x = 1, .y = 1, .z = 1 }, .tex_coord = .{ .x = 1, .y = 1 } },
-
-            Vertex{ .pos = .{ .x = -0.5, .y = -0.5, .z = 0 }, .color = .{ .x = 1, .y = 0, .z = 0 }, .tex_coord = .{ .x = 1, .y = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = -0.5, .z = 0 }, .color = .{ .x = 0, .y = 1, .z = 0 }, .tex_coord = .{ .x = 0, .y = 0 } },
-            Vertex{ .pos = .{ .x = 0.5, .y = 0.5, .z = 0 }, .color = .{ .x = 0, .y = 0, .z = 1 }, .tex_coord = .{ .x = 0, .y = 1 } },
-            Vertex{ .pos = .{ .x = -0.5, .y = 0.5, .z = 0 }, .color = .{ .x = 1, .y = 1, .z = 1 }, .tex_coord = .{ .x = 1, .y = 1 } },
-        },
+        .verticies = .empty,
         .vertex_buffer = .null_handle,
         .vertex_buffer_memory = .null_handle,
 
-        .indices = &.{
-            0, 1, 2, 0, 2, 3,
-            4, 5, 6, 4, 6, 7,
-        },
+        .indices = .empty,
         .index_buffer = .null_handle,
         .index_buffer_memory = .null_handle,
 
@@ -319,6 +307,7 @@ fn initVulkan(self: *App) !void {
     try self.createTextureImage();
     try self.createTextureImageView();
     try self.createTextureSampler();
+    try self.loadModel();
     try self.createVertexBuffer();
     try self.createIndexBuffer();
     try self.createUniformBuffers();
@@ -326,6 +315,52 @@ fn initVulkan(self: *App) !void {
     try self.createDescriptorSets();
     try self.createCommandBuffers();
     try self.createSyncObjects();
+}
+
+fn loadModel(self: *App) !void {
+    const self_path = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(self_path);
+    var self_dir = try std.fs.openDirAbsolute(self_path, .{ .access_sub_paths = true });
+    defer self_dir.close();
+
+    const obj_file = try self_dir.openFile("../objects/viking_room.obj", .{ .lock = .shared });
+    defer obj_file.close();
+
+    var read_buf: [256]u8 = undefined;
+    var reader = obj_file.reader(read_buf[0..]);
+    const obj_content: []u8 = try allocator.alloc(u8, @intCast(try reader.getSize()));
+    defer allocator.free(obj_content);
+
+    const interface = &reader.interface;
+
+    var bytes_read: usize = 0;
+    while (interface.takeDelimiterInclusive('\n')) |line| {
+        @memcpy(obj_content[bytes_read .. bytes_read + line.len], line);
+        bytes_read += line.len;
+    } else |err| if (err != error.EndOfStream) {
+        return err;
+    }
+
+    var obj_data = try obj.parseObj(allocator, obj_content);
+    defer obj_data.deinit(allocator);
+    for (obj_data.meshes) |mesh| {
+        for (mesh.indices) |index| {
+            try self.verticies.append(allocator, Vertex{
+                .pos = Vec3{
+                    .x = obj_data.vertices[index.vertex.? * 3 + 0],
+                    .y = obj_data.vertices[index.vertex.? * 3 + 1],
+                    .z = obj_data.vertices[index.vertex.? * 3 + 2],
+                },
+                .tex_coord = Vec2{
+                    .x = obj_data.tex_coords[index.tex_coord.? * 2 + 0],
+                    .y = 1 - obj_data.tex_coords[index.tex_coord.? * 2 + 1],
+                },
+                .color = Vec3{ .x = 1, .y = 1, .z = 1 },
+            });
+
+            try self.indices.append(allocator, @intCast(self.indices.items.len));
+        }
+    }
 }
 
 fn findSupportedFormat(self: *App, candidates: []const vk.Format, tiling: vk.ImageTiling, features: vk.FormatFeatureFlags) !vk.Format {
@@ -536,7 +571,7 @@ inline fn createTextureImage(self: *App) !void {
     const self_dir = try std.fs.openDirAbsolute(self_path, .{ .access_sub_paths = true });
     allocator.free(self_path);
 
-    const image_path = try self_dir.realpathAlloc(allocator, "../images/WaltahBetter.jpg");
+    const image_path = try self_dir.realpathAlloc(allocator, "../images/viking_room.png");
 
     std.debug.print("image path: {s}\n", .{image_path});
 
@@ -742,7 +777,7 @@ fn createDescriptorSetLayout(self: *App) !void {
 }
 
 fn createIndexBuffer(self: *App) !void {
-    const buffer_size: vk.DeviceSize = @sizeOf(u32) * self.indices.len;
+    const buffer_size: vk.DeviceSize = @sizeOf(u32) * self.indices.items.len;
 
     // Create host visible buffer
     const staging_buffer, const staging_buffer_memory = try self.createBuffer(buffer_size, .{ .transfer_src_bit = true }, .{
@@ -753,7 +788,7 @@ fn createIndexBuffer(self: *App) !void {
     // Copy data to host visisble buffer
     const data = try self.vk_device.mapMemory(staging_buffer_memory, 0, buffer_size, .{});
     const ptr: [*]u32 = @ptrCast(@alignCast(data));
-    @memcpy(ptr, self.indices);
+    @memcpy(ptr, self.indices.items);
     self.vk_device.unmapMemory(staging_buffer_memory);
 
     // Create a device local buffer and copy data
@@ -768,7 +803,7 @@ fn createIndexBuffer(self: *App) !void {
 }
 
 fn createVertexBuffer(self: *App) !void {
-    const buffer_size: vk.DeviceSize = @sizeOf(Vertex) * self.verticies.len;
+    const buffer_size: vk.DeviceSize = @sizeOf(Vertex) * self.verticies.items.len;
     const staging_buffer, const staging_buffer_memory = try self.createBuffer(buffer_size, .{ .transfer_src_bit = true }, .{
         .host_visible_bit = true,
         .host_coherent_bit = true,
@@ -776,7 +811,7 @@ fn createVertexBuffer(self: *App) !void {
 
     const data = try self.vk_device.mapMemory(staging_buffer_memory, 0, buffer_size, .{});
     const ptr: [*]Vertex = @ptrCast(@alignCast(data));
-    @memcpy(ptr, self.verticies);
+    @memcpy(ptr, self.verticies.items);
     self.vk_device.unmapMemory(staging_buffer_memory);
 
     self.vertex_buffer, self.vertex_buffer_memory = try self.createBuffer(buffer_size, .{
@@ -905,7 +940,7 @@ fn recordCommandBuffer(self: *App, command_buffer: vk.CommandBuffer, image_index
     cmd_buf.bindIndexBuffer(self.index_buffer, 0, .uint32);
 
     cmd_buf.bindDescriptorSets(.graphics, self.pipeline_layout, 0, 1, @ptrCast(&self.descriptor_sets[self.current_frame]), 0, null);
-    cmd_buf.drawIndexed(@intCast(self.indices.len), 1, 0, 0, 0);
+    cmd_buf.drawIndexed(@intCast(self.indices.items.len), 1, 0, 0, 0);
     cmd_buf.endRenderPass();
 
     try cmd_buf.endCommandBuffer();
@@ -1491,7 +1526,7 @@ fn drawFrame(self: *App) !void {
         return err;
     };
 
-    try self.updateUniformBuffer(self.current_frame);
+    self.updateUniformBuffer(self.current_frame);
 
     // Only reset the fences after we are sure we will do work
     // If fences are reset and we recreate swapchain and return early, then the program will deadlock.
@@ -1538,10 +1573,10 @@ fn drawFrame(self: *App) !void {
 }
 
 var start: i64 = 0;
-fn updateUniformBuffer(self: *App, current_image: u32) !void {
+fn updateUniformBuffer(self: *App, current_image: u32) void {
     const time = std.time.milliTimestamp() - start;
     var ubo: UniformBufferObject = .{
-        .model = math.rotate(Mat4.identity, std.math.degreesToRadians(@as(f32, @floatFromInt(time))) / @as(f32, 1000) * 90, .{ .x = 0, .y = 0, .z = 1 }),
+        .model = math.rotate(Mat4.identity, std.math.degreesToRadians(@as(f32, @floatFromInt(@divFloor(time, 100)))), .{ .x = 0, .y = 0, .z = 1 }),
         .view = math.lookAt(.{ .x = 2, .y = 2, .z = 2 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = 0, .y = 0, .z = 1 }),
         .proj = math.perspective(std.math.degreesToRadians(45), @as(f32, @floatFromInt(self.swap_chain_extent.width)) / @as(f32, @floatFromInt(self.swap_chain_extent.height)), 0.1, 10),
     };
@@ -1553,6 +1588,9 @@ fn updateUniformBuffer(self: *App, current_image: u32) !void {
 }
 
 fn cleanup(self: *App) void {
+    self.verticies.deinit(allocator);
+    self.indices.deinit(allocator);
+
     try self.cleanupSwapChain();
 
     self.vk_device.destroySampler(self.texture_sampler, null);

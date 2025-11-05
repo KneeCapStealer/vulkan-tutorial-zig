@@ -28,6 +28,11 @@ pub fn build(b: *std.Build) void {
         .install_dir = .prefix,
         .install_subdir = "shaders/out",
     });
+    b.installDirectory(.{
+        .source_dir = b.path("objects"),
+        .install_dir = .prefix,
+        .install_subdir = "objects",
+    });
 
     const vulkan = b.dependency("vulkan", .{
         .registry = b.path("vulkan/vk.xml"),
@@ -54,6 +59,9 @@ pub fn build(b: *std.Build) void {
     });
 
     exe.root_module.addImport("zigimg", zigimg_dependency.module("zigimg"));
+
+    const obj_mod = b.dependency("obj", .{ .target = target, .optimize = optimize }).module("obj");
+    exe_mod.addImport("obj", obj_mod);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

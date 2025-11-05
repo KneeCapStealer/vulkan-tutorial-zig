@@ -24,7 +24,7 @@
     // original project's identity. Thus it is recommended to leave the comment
     // on the following line intact, so that it shows up in code reviews that
     // modify the field.
-    .fingerprint =  0x37322bff72c27b94, // Changing this has security and trust implications.
+    .fingerprint = 0x37322bff72c27b94, // Changing this has security and trust implications.
 
     // Tracks the earliest Zig version that the package considers to be a
     // supported use case.
@@ -47,6 +47,10 @@
         .zigimg = .{
             .url = "git+https://github.com/zigimg/zigimg.git#f5783e87627cbd9e0b45fad112e9f73503914f36",
             .hash = "zigimg-0.1.0-8_eo2vBrFQBhsrLpexdcDQY-zrlzkyFZfKuYX-Nry6KN",
+        },
+        .obj = .{
+            .url = "git+https://github.com/chip2n/zig-obj.git#47410383c81d24454e370ffadc0980af7abea522",
+            .hash = "obj-3.0.2-v8OfitvLAADxUf6oMHCiWxjJILklY-IMKXlwX-Pv8rKu",
         },
     },
     .paths = .{
