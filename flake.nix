@@ -20,6 +20,7 @@
             packages =
               with pkgs;
               [
+                pkg-config
                 vulkan-headers
                 vulkan-loader
                 vulkan-validation-layers
@@ -28,6 +29,7 @@
                 lldb
 
                 wayland
+                wayland-scanner
                 wayland-protocols
 
                 libxkbcommon

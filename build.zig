@@ -66,7 +66,6 @@ pub fn build(b: *std.Build) void {
     const libwindow = b.dependency("master", .{
         .target = target,
         .optimize = optimize,
-        .registry = b.path("vulkan/vk.xml"),
     });
     exe_mod.addImport("libwindow", libwindow.module("renderer"));
 
