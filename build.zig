@@ -6,18 +6,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const exe = b.addExecutable(.{
-        .name = "waltuh",
-        .root_module = exe_mod,
-    });
-    b.installArtifact(exe);
     b.installDirectory(.{
         .source_dir = b.path("images"),
         .install_dir = .prefix,
@@ -39,35 +27,40 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }).module("vulkan-zig");
-    exe.root_module.addImport("vulkan", vulkan);
 
-    const glfw = b.dependency("zglfw", .{
+    const zigimg = b.dependency("zigimg", .{
         .target = target,
         .optimize = optimize,
-        .x11 = true,
-        .wayland = true,
-    });
-    exe.root_module.addImport("glfw", glfw.module("root"));
+    }).module("zigimg");
 
-    if (target.result.os.tag != .emscripten) {
-        exe.linkLibrary(glfw.artifact("glfw"));
-    }
-
-    const zigimg_dependency = b.dependency("zigimg", .{
+    const obj = b.dependency("obj", .{
         .target = target,
         .optimize = optimize,
-    });
+    }).module("obj");
 
-    exe.root_module.addImport("zigimg", zigimg_dependency.module("zigimg"));
-
-    const obj_mod = b.dependency("obj", .{ .target = target, .optimize = optimize }).module("obj");
-    exe_mod.addImport("obj", obj_mod);
-
-    const libwindow = b.dependency("master", .{
+    const libwindow = b.dependency("libwindow", .{
         .target = target,
         .optimize = optimize,
+    }).module("libwindow");
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "vulkan", .module = vulkan },
+            .{ .name = "zigimg", .module = zigimg },
+            .{ .name = "obj", .module = obj },
+            .{ .name = "libwindow", .module = libwindow },
+        },
     });
-    exe_mod.addImport("libwindow", libwindow.module("renderer"));
+
+    const exe = b.addExecutable(.{
+        .name = "waltuh",
+        .root_module = exe_mod,
+    });
+
+    b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

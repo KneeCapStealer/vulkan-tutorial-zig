@@ -52,9 +52,9 @@
             .url = "git+https://github.com/chip2n/zig-obj.git#47410383c81d24454e370ffadc0980af7abea522",
             .hash = "obj-3.0.2-v8OfitvLAADxUf6oMHCiWxjJILklY-IMKXlwX-Pv8rKu",
         },
-        .master = .{
-            .url = "git+https://codeberg.org/KneeCapThief/ZigRenderer.git#7d19de4f08500ac5bbf075ce99b5f66147778e0a",
-            .hash = "master-0.0.0-ERERER1RAAA5Sd72Yu7IuiXWfdJ6EXEpEo8Bx9qfPJUn",
+        .libwindow = .{
+            .url = "git+https://codeberg.org/KneeCapThief/ZigRenderer.git#2592bea256270eb46feb408c6d428697ef2cf195",
+            .hash = "libwindow-0.0.0-txjn9KFPAAA9lCzKX1i8VBUS0-guc1rzDfLhr5BXGPia",
         },
     },
     .paths = .{

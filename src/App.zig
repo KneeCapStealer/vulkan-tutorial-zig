@@ -4,10 +4,10 @@ const meta = std.meta;
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 
-const glfw = @import("glfw");
 const vk = @import("vulkan");
 const img = @import("zigimg");
 const obj = @import("obj");
+const libwindow = @import("libwindow");
 
 const math = @import("math.zig");
 const Vec2 = math.Vec2;
@@ -76,7 +76,7 @@ const device_extensions: []const [*:0]const u8 = &.{
 
 const max_frames_in_flight = 2;
 
-window: *glfw.Window,
+window: *libwindow.WaylandClient,
 surface: vk.SurfaceKHR,
 
 vk_base: vk.BaseWrapper,
@@ -227,7 +227,7 @@ pub fn init() App {
 }
 
 pub fn run(self: *App) !void {
-    try glfw.init();
+    try libwindow.init();
 
     try self.initWindow();
     try self.initVulkan();
@@ -236,16 +236,13 @@ pub fn run(self: *App) !void {
 }
 
 fn initWindow(self: *App) !void {
-    glfw.windowHint(glfw.WindowHint.client_api, glfw.ClientApi.no_api);
-
-    self.window = try glfw.createWindow(window_width, window_height, "Vulkan", null);
-    glfw.setWindowUserPointer(self.window, self);
-    _ = glfw.setFramebufferSizeCallback(self.window, framebufferResizeCallback);
+    self.window = try libwindow.WaylandClient.open(allocator, 200, 100);
+    self.window.callbacks.windowFramebufResize = framebufferResizeCallback;
+    self.window.userdata = self;
 }
 
-fn framebufferResizeCallback(window: *glfw.Window, _: c_int, _: c_int) callconv(.c) void {
-    const self: *App = glfw.getWindowUserPointer(window, App).?;
-
+fn framebufferResizeCallback(window: *libwindow.WaylandClient, _: c_int, _: c_int) void {
+    const self: *App = @ptrCast(@alignCast(window.userdata.?));
     self.framebuffer_resized = true;
 }
 
@@ -285,11 +282,18 @@ fn createInstance(self: *App) !void {
 }
 
 fn createSurface(self: *App) !void {
-    try glfw.createWindowSurface(@ptrFromInt(@intFromEnum(self.vk_instance.handle)), self.window, null, @ptrCast(&self.surface));
+    const result: vk.Result = @enumFromInt(try self.window.createVulkanSurface(@ptrFromInt(@intFromEnum(self.vk_instance.handle)), @ptrCast(&self.surface)));
+    if (result != .success) {
+        return error.FailedCreatingSurface;
+    }
 }
 
+const VkGetInstanceProcAddress = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
+
 fn initVulkan(self: *App) !void {
-    self.vk_base = .load(glfwGetInstanceProcAddress);
+    const vkGetInstanceProcAddr: VkGetInstanceProcAddress = @ptrCast(try libwindow.getVkGetInstanceProcAddr());
+
+    self.vk_base = .load(vkGetInstanceProcAddr);
 
     try self.createInstance();
     try self.setupDebugMessenger();
@@ -1263,14 +1267,6 @@ fn createImageViews(self: *App) !void {
 
 fn recreateSwapChain(self: *App) !void {
     // If the windows size is 0 then it is minimized and we pause the app
-    var new_width: c_int = 0;
-    var new_height: c_int = 0;
-    glfw.getFramebufferSize(self.window, &new_width, &new_height);
-    while (new_height == 0 or new_width == 0) {
-        glfw.getFramebufferSize(self.window, &new_width, &new_height);
-        glfw.waitEvents();
-    }
-
     try self.vk_device.deviceWaitIdle();
 
     try self.cleanupSwapChain();
@@ -1502,8 +1498,8 @@ fn setupDebugMessenger(self: *App) !void {
 
 fn mainLoop(self: *App) !void {
     start = std.time.milliTimestamp();
-    while (!glfw.windowShouldClose(self.window)) {
-        glfw.pollEvents();
+
+    while (libwindow.dispatch() == .SUCCESS and !self.window.should_close) {
         try self.drawFrame();
     }
 
@@ -1638,8 +1634,7 @@ fn cleanup(self: *App) void {
 
     self.vk_instance.destroySurfaceKHR(self.surface, null);
     self.vk_instance.destroyInstance(null);
-    glfw.destroyWindow(self.window);
-    glfw.terminate();
+    self.window.close(allocator);
 
     if (builtin.mode == .Debug) {
         const result = debug_allocator.deinit();
@@ -1673,11 +1668,11 @@ fn checkValLayerSupport(self: *App) !bool {
 }
 
 fn getRequiredExtensions() ![]const [*:0]const u8 {
-    const glfw_extensions = try glfw.getRequiredInstanceExtensions();
+    const required_extensions = libwindow.getRequiredInstanceExtensions();
 
-    var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(glfw_extensions.len + 1));
+    var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(required_extensions.len + 1));
     defer extensions.deinit(allocator);
-    extensions.appendSliceAssumeCapacity(glfw_extensions[0..glfw_extensions.len]);
+    extensions.appendSliceAssumeCapacity(required_extensions[0..required_extensions.len]);
 
     if (enable_val_layers) {
         extensions.appendAssumeCapacity(vk.extensions.ext_debug_utils.name.ptr);
@@ -1772,8 +1767,8 @@ fn chooseSwapExtent(self: *App, capabilities: *const vk.SurfaceCapabilitiesKHR) 
         return capabilities.current_extent;
     }
 
-    var framebuffer_width: c_int, var framebuffer_height: c_int = .{ undefined, undefined };
-    glfw.getFramebufferSize(self.window, &framebuffer_width, &framebuffer_height);
+    const framebuffer_width = self.window.width;
+    const framebuffer_height = self.window.height;
 
     return vk.Extent2D{
         .width = std.math.clamp(@as(u32, @intCast(framebuffer_width)), capabilities.min_image_extent.width, capabilities.max_image_extent.width),
@@ -1815,6 +1810,3 @@ const default_debug_messenger_create_info: vk.DebugUtilsMessengerCreateInfoEXT =
     },
     .pfn_user_callback = debugCallback,
 };
-
-// Define the function ourselves because glfw.getInstanceProcAddr doesn't use correct types
-extern fn glfwGetInstanceProcAddress(vk.Instance, [*:0]const u8) callconv(.c) vk.PfnVoidFunction;
