@@ -76,7 +76,7 @@ const device_extensions: []const [*:0]const u8 = &.{
 
 const max_frames_in_flight = 2;
 
-window: *libwindow.WaylandClient,
+window: *libwindow.Window,
 surface: vk.SurfaceKHR,
 
 vk_base: vk.BaseWrapper,
@@ -227,21 +227,55 @@ pub fn init() App {
 }
 
 pub fn run(self: *App) !void {
-    try libwindow.init();
+    {
+        const lw_state: *libwindow.State = try .init(allocator);
+        defer lw_state.deinit();
 
-    try self.initWindow();
-    try self.initVulkan();
-    try self.mainLoop();
-    self.cleanup();
+        try self.initWindow(lw_state);
+        try self.initVulkan(lw_state);
+        try self.mainLoop(lw_state);
+        self.cleanup();
+    }
+
+    if (builtin.mode == .Debug) {
+        const result = debug_allocator.deinit();
+        if (result == .leak) {
+            std.debug.print("\n\nPANIC PANIC EVERYBODY PANIC THERE IS A LEAK AAAAAAAAAAAAAAAAAAAA\n\n", .{});
+        } else {
+            std.debug.print("\n\nNo leaks detected\n\n", .{});
+        }
+    }
 }
 
-fn initWindow(self: *App) !void {
-    self.window = try libwindow.WaylandClient.open(allocator, 200, 100);
-    self.window.callbacks.windowFramebufResize = framebufferResizeCallback;
+fn initWindow(self: *App, lw_state: *libwindow.State) !void {
+    self.window = try .open(allocator, lw_state, 200, 100);
+    self.window.callbacks.framebufResize = framebufferResizeCallback;
     self.window.userdata = self;
+
+    self.window.callbacks.fullscreen = fullscreenCallback;
 }
 
-fn framebufferResizeCallback(window: *libwindow.WaylandClient, _: c_int, _: c_int) void {
+fn fullscreenCallback(_: *libwindow.Window, is_fullscreen: bool) void {
+    std.debug.print(
+        \\
+        \\Window fullscreen state changed
+        \\    fullscreen: {}
+        \\
+    , .{
+        is_fullscreen,
+    });
+}
+
+fn maximizedCallback(_: *libwindow.Window, is_maximized: bool) void {
+    std.debug.print(
+        \\
+        \\Window maximized state changed
+        \\    maximized: {}
+        \\
+    , .{is_maximized});
+}
+
+fn framebufferResizeCallback(window: *libwindow.Window, _: u32, _: u32) void {
     const self: *App = @ptrCast(@alignCast(window.userdata.?));
     self.framebuffer_resized = true;
 }
@@ -281,8 +315,8 @@ fn createInstance(self: *App) !void {
     self.vk_instance = .init(instance, &self.instance_wrapper);
 }
 
-fn createSurface(self: *App) !void {
-    const result: vk.Result = @enumFromInt(try self.window.createVulkanSurface(@ptrFromInt(@intFromEnum(self.vk_instance.handle)), @ptrCast(&self.surface)));
+fn createSurface(self: *App, lw_state: *libwindow.State) !void {
+    const result: vk.Result = @enumFromInt(try self.window.createVulkanSurface(lw_state, @ptrFromInt(@intFromEnum(self.vk_instance.handle)), @ptrCast(&self.surface)));
     if (result != .success) {
         return error.FailedCreatingSurface;
     }
@@ -290,14 +324,14 @@ fn createSurface(self: *App) !void {
 
 const VkGetInstanceProcAddress = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
 
-fn initVulkan(self: *App) !void {
+fn initVulkan(self: *App, lw_state: *libwindow.State) !void {
     const vkGetInstanceProcAddr: VkGetInstanceProcAddress = @ptrCast(try libwindow.getVkGetInstanceProcAddr());
 
     self.vk_base = .load(vkGetInstanceProcAddr);
 
     try self.createInstance();
     try self.setupDebugMessenger();
-    try self.createSurface();
+    try self.createSurface(lw_state);
     try self.pickPhysicalDevice();
     try self.createLogicalDevice();
     try self.createSwapChain();
@@ -1496,10 +1530,10 @@ fn setupDebugMessenger(self: *App) !void {
     self.debug_messenger = try self.vk_instance.createDebugUtilsMessengerEXT(&create_info, null);
 }
 
-fn mainLoop(self: *App) !void {
+fn mainLoop(self: *App, lw_state: *libwindow.State) !void {
     start = std.time.milliTimestamp();
 
-    while (libwindow.dispatch() == .SUCCESS and !self.window.should_close) {
+    while (lw_state.dispatch() == .SUCCESS and !self.window.should_close) {
         try self.drawFrame();
     }
 
@@ -1635,15 +1669,6 @@ fn cleanup(self: *App) void {
     self.vk_instance.destroySurfaceKHR(self.surface, null);
     self.vk_instance.destroyInstance(null);
     self.window.close(allocator);
-
-    if (builtin.mode == .Debug) {
-        const result = debug_allocator.deinit();
-        if (result == .leak) {
-            std.debug.print("\n\nPANIC PANIC EVERYBODY PANIC THERE IS A LEAK AAAAAAAAAAAAAAAAAAAA\n\n", .{});
-        } else {
-            std.debug.print("\n\nNo leaks detected\n\n", .{});
-        }
-    }
 }
 
 fn checkValLayerSupport(self: *App) !bool {

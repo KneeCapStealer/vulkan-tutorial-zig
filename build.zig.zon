@@ -53,8 +53,7 @@
             .hash = "obj-3.0.2-v8OfitvLAADxUf6oMHCiWxjJILklY-IMKXlwX-Pv8rKu",
         },
         .libwindow = .{
-            .url = "git+https://codeberg.org/KneeCapThief/ZigRenderer.git#2592bea256270eb46feb408c6d428697ef2cf195",
-            .hash = "libwindow-0.0.0-txjn9KFPAAA9lCzKX1i8VBUS0-guc1rzDfLhr5BXGPia",
+            .path = "../ZigRenderer",
         },
     },
     .paths = .{
