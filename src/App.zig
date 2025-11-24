@@ -253,6 +253,7 @@ fn initWindow(self: *App, lw_state: *libwindow.State) !void {
     self.window.userdata = self;
 
     self.window.callbacks.fullscreen = fullscreenCallback;
+    self.window.callbacks.maximized = maximizedCallback;
 }
 
 fn fullscreenCallback(_: *libwindow.Window, is_fullscreen: bool) void {
@@ -1535,6 +1536,9 @@ fn mainLoop(self: *App, lw_state: *libwindow.State) !void {
 
     while (lw_state.dispatch() == .SUCCESS and !self.window.should_close) {
         try self.drawFrame();
+        if (self.window.maximized == false) {
+            std.debug.print("\n\nNOT MAXIMIZED!!\n\n", .{});
+        }
     }
 
     try self.vk_device.deviceWaitIdle();
