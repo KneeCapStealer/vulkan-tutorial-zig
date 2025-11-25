@@ -6,6 +6,8 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const llvm = b.option(bool, "llvm", "Use llvm codegen backend") orelse false;
+
     b.installDirectory(.{
         .source_dir = b.path("images"),
         .install_dir = .prefix,
@@ -58,6 +60,7 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{
         .name = "waltuh",
         .root_module = exe_mod,
+        .use_llvm = llvm,
     });
 
     b.installArtifact(exe);
