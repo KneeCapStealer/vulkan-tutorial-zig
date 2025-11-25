@@ -248,7 +248,7 @@ pub fn run(self: *App) !void {
 }
 
 fn initWindow(self: *App, lw_state: *libwindow.State) !void {
-    self.window = try .open(allocator, lw_state, 200, 100);
+    self.window = try .open(allocator, lw_state, .{ .width = 200, .height = 100 });
     self.window.callbacks.framebufResize = framebufferResizeCallback;
     self.window.userdata = self;
 
@@ -276,7 +276,7 @@ fn maximizedCallback(_: *libwindow.Window, is_maximized: bool) void {
     , .{is_maximized});
 }
 
-fn framebufferResizeCallback(window: *libwindow.Window, _: u32, _: u32) void {
+fn framebufferResizeCallback(window: *libwindow.Window, _: libwindow.Extent) void {
     const self: *App = @ptrCast(@alignCast(window.userdata.?));
     self.framebuffer_resized = true;
 }
@@ -1536,9 +1536,6 @@ fn mainLoop(self: *App, lw_state: *libwindow.State) !void {
 
     while (lw_state.dispatch() == .SUCCESS and !self.window.should_close) {
         try self.drawFrame();
-        if (self.window.maximized == false) {
-            std.debug.print("\n\nNOT MAXIMIZED!!\n\n", .{});
-        }
     }
 
     try self.vk_device.deviceWaitIdle();
@@ -1796,12 +1793,11 @@ fn chooseSwapExtent(self: *App, capabilities: *const vk.SurfaceCapabilitiesKHR) 
         return capabilities.current_extent;
     }
 
-    const framebuffer_width = self.window.width;
-    const framebuffer_height = self.window.height;
+    const framebuffer = self.window.committed.framebuf_size;
 
     return vk.Extent2D{
-        .width = std.math.clamp(@as(u32, @intCast(framebuffer_width)), capabilities.min_image_extent.width, capabilities.max_image_extent.width),
-        .height = std.math.clamp(@as(u32, @intCast(framebuffer_height)), capabilities.min_image_extent.height, capabilities.max_image_extent.height),
+        .width = std.math.clamp(framebuffer.width, capabilities.min_image_extent.width, capabilities.max_image_extent.width),
+        .height = std.math.clamp(framebuffer.height, capabilities.min_image_extent.height, capabilities.max_image_extent.height),
     };
 }
 
