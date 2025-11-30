@@ -248,7 +248,10 @@ pub fn run(self: *App) !void {
 }
 
 fn initWindow(self: *App, lw_state: *libwindow.State) !void {
-    self.window = try .open(allocator, lw_state, .{ .width = 200, .height = 100 });
+    self.window = try .open(lw_state, libwindow.Window.WaylandWindowOpenOptions{
+        .size = .{ .width = 4 * 240, .height = 3 * 240 },
+        .allow_resizing = false,
+    });
     self.window.callbacks.framebufResize = framebufferResizeCallback;
     self.window.userdata = self;
 
@@ -1669,7 +1672,7 @@ fn cleanup(self: *App) void {
 
     self.vk_instance.destroySurfaceKHR(self.surface, null);
     self.vk_instance.destroyInstance(null);
-    self.window.close(allocator);
+    self.window.close();
 }
 
 fn checkValLayerSupport(self: *App) !bool {
@@ -1793,7 +1796,7 @@ fn chooseSwapExtent(self: *App, capabilities: *const vk.SurfaceCapabilitiesKHR) 
         return capabilities.current_extent;
     }
 
-    const framebuffer = self.window.committed.framebuf_size;
+    const framebuffer = self.window.framebuf_size;
 
     return vk.Extent2D{
         .width = std.math.clamp(framebuffer.width, capabilities.min_image_extent.width, capabilities.max_image_extent.width),
