@@ -40,10 +40,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }).module("obj");
 
-    const libwindow = b.dependency("libwindow", .{
+    const glass = b.dependency("glass", .{
         .target = target,
         .optimize = optimize,
-    }).module("libwindow");
+    }).module("glass");
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "vulkan", .module = vulkan },
             .{ .name = "zigimg", .module = zigimg },
             .{ .name = "obj", .module = obj },
-            .{ .name = "libwindow", .module = libwindow },
+            .{ .name = "glass", .module = glass },
         },
     });
 
@@ -64,6 +64,15 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
+
+    const check_exe = b.addExecutable(.{
+        .name = "waltuh",
+        .root_module = exe_mod,
+        .use_llvm = llvm,
+    });
+
+    const check = b.step("check", "Check if the program compiles");
+    check.dependOn(&check_exe.step);
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());

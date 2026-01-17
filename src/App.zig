@@ -1,13 +1,13 @@
 const std = @import("std");
 const mem = std.mem;
 const meta = std.meta;
-const builtin = @import("builtin");
 const assert = std.debug.assert;
+const builtin = @import("builtin");
 
-const vk = @import("vulkan");
 const img = @import("zigimg");
+const libw = @import("glass");
 const obj = @import("obj");
-const libwindow = @import("libwindow");
+const vk = @import("vulkan");
 
 const math = @import("math.zig");
 const Vec2 = math.Vec2;
@@ -76,7 +76,8 @@ const device_extensions: []const [*:0]const u8 = &.{
 
 const max_frames_in_flight = 2;
 
-window: *libwindow.Window,
+window: *libw.Window,
+win_dispatch: WinDispatch,
 surface: vk.SurfaceKHR,
 
 vk_base: vk.BaseWrapper,
@@ -113,8 +114,6 @@ in_flight_fences: [max_frames_in_flight]vk.Fence,
 
 current_frame: u32,
 
-framebuffer_resized: bool,
-
 verticies: std.ArrayList(Vertex),
 vertex_buffer: vk.Buffer,
 vertex_buffer_memory: vk.DeviceMemory,
@@ -139,6 +138,9 @@ depth_image: vk.Image,
 depth_image_memory: vk.DeviceMemory,
 depth_image_view: vk.ImageView,
 
+should_close: bool,
+framebuf_resized: bool,
+
 pub fn init() App {
     comptime var command_buffers: [max_frames_in_flight]vk.CommandBuffer = undefined;
     inline for (&command_buffers) |*buffer| {
@@ -162,6 +164,7 @@ pub fn init() App {
 
     return App{
         .window = undefined,
+        .win_dispatch = undefined,
         .surface = .null_handle,
 
         .vk_base = undefined,
@@ -198,8 +201,6 @@ pub fn init() App {
 
         .current_frame = 0,
 
-        .framebuffer_resized = false,
-
         .verticies = .empty,
         .vertex_buffer = .null_handle,
         .vertex_buffer_memory = .null_handle,
@@ -223,12 +224,15 @@ pub fn init() App {
         .depth_image = .null_handle,
         .depth_image_memory = .null_handle,
         .depth_image_view = .null_handle,
+
+        .framebuf_resized = false,
+        .should_close = false,
     };
 }
 
 pub fn run(self: *App) !void {
     {
-        const lw_state: *libwindow.State = try .init(allocator);
+        const lw_state: *libw.State = try .init(allocator);
         defer lw_state.deinit();
 
         try self.initWindow(lw_state);
@@ -247,41 +251,76 @@ pub fn run(self: *App) !void {
     }
 }
 
-fn initWindow(self: *App, lw_state: *libwindow.State) !void {
-    self.window = try .open(lw_state, libwindow.Window.WaylandWindowOpenOptions{
-        .size = .{ .width = 4 * 240, .height = 3 * 240 },
-        .allow_resizing = false,
-    });
-    self.window.callbacks.framebufResize = framebufferResizeCallback;
-    self.window.userdata = self;
+const WinDispatch = struct {
+    fn resizeCallback(dispatch: *anyopaque, new_size: libw.Extent) void {
+        _ = dispatch;
+        _ = new_size;
+    }
 
-    self.window.callbacks.fullscreen = fullscreenCallback;
-    self.window.callbacks.maximized = maximizedCallback;
-}
+    fn framebufResizeCallback(dispatch: *anyopaque, new_size: libw.Extent) void {
+        _ = new_size;
 
-fn fullscreenCallback(_: *libwindow.Window, is_fullscreen: bool) void {
-    std.debug.print(
-        \\
-        \\Window fullscreen state changed
-        \\    fullscreen: {}
-        \\
-    , .{
-        is_fullscreen,
-    });
-}
+        const self: *WinDispatch = @ptrCast(@alignCast(dispatch));
+        const app: *App = @alignCast(@fieldParentPtr("win_dispatch", self));
 
-fn maximizedCallback(_: *libwindow.Window, is_maximized: bool) void {
-    std.debug.print(
-        \\
-        \\Window maximized state changed
-        \\    maximized: {}
-        \\
-    , .{is_maximized});
-}
+        app.framebuf_resized = true;
+    }
 
-fn framebufferResizeCallback(window: *libwindow.Window, _: libwindow.Extent) void {
-    const self: *App = @ptrCast(@alignCast(window.userdata.?));
-    self.framebuffer_resized = true;
+    fn closeCallback(dispatch: *anyopaque) void {
+        const self: *WinDispatch = @ptrCast(@alignCast(dispatch));
+        const app: *App = @alignCast(@fieldParentPtr("win_dispatch", self));
+        app.should_close = true;
+    }
+
+    fn fullscreenCallback(dispatch: *anyopaque, is_fullscreen: bool) void {
+        _ = dispatch;
+        std.debug.print(
+            \\
+            \\Window fullscreen state changed
+            \\    fullscreen: {}
+            \\
+        , .{
+            is_fullscreen,
+        });
+    }
+
+    fn maximizedCallback(dispatch: *anyopaque, is_maximized: bool) void {
+        _ = dispatch;
+        std.debug.print(
+            \\
+            \\Window maximized state changed
+            \\    maximized: {}
+            \\
+        ,
+            .{is_maximized},
+        );
+    }
+
+    pub fn getDispatch(self: *WinDispatch) libw.Window.Dispatch {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .close = closeCallback,
+                .resize = resizeCallback,
+                .framebufResize = framebufResizeCallback,
+                .fullscreen = fullscreenCallback,
+                .maximized = maximizedCallback,
+            },
+        };
+    }
+};
+
+fn initWindow(self: *App, lw_state: *libw.State) !void {
+    self.win_dispatch = .{};
+
+    self.window = try .open(
+        lw_state,
+        .{
+            .size = .{ .width = 4 * 240, .height = 3 * 240 },
+            .allow_resizing = true,
+        },
+        self.win_dispatch.getDispatch(),
+    );
 }
 
 fn createInstance(self: *App) !void {
@@ -319,7 +358,7 @@ fn createInstance(self: *App) !void {
     self.vk_instance = .init(instance, &self.instance_wrapper);
 }
 
-fn createSurface(self: *App, lw_state: *libwindow.State) !void {
+fn createSurface(self: *App, lw_state: *libw.State) !void {
     const result: vk.Result = @enumFromInt(try self.window.createVulkanSurface(lw_state, @ptrFromInt(@intFromEnum(self.vk_instance.handle)), @ptrCast(&self.surface)));
     if (result != .success) {
         return error.FailedCreatingSurface;
@@ -328,8 +367,8 @@ fn createSurface(self: *App, lw_state: *libwindow.State) !void {
 
 const VkGetInstanceProcAddress = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
 
-fn initVulkan(self: *App, lw_state: *libwindow.State) !void {
-    const vkGetInstanceProcAddr: VkGetInstanceProcAddress = @ptrCast(try libwindow.getVkGetInstanceProcAddr());
+fn initVulkan(self: *App, lw_state: *libw.State) !void {
+    const vkGetInstanceProcAddr: VkGetInstanceProcAddress = @ptrCast(try libw.getVkGetInstanceProcAddr());
 
     self.vk_base = .load(vkGetInstanceProcAddr);
 
@@ -1534,10 +1573,10 @@ fn setupDebugMessenger(self: *App) !void {
     self.debug_messenger = try self.vk_instance.createDebugUtilsMessengerEXT(&create_info, null);
 }
 
-fn mainLoop(self: *App, lw_state: *libwindow.State) !void {
+fn mainLoop(self: *App, lw_state: *libw.State) !void {
     start = std.time.milliTimestamp();
 
-    while (lw_state.dispatch() == .SUCCESS and !self.window.should_close) {
+    while (lw_state.dispatch() == .SUCCESS and !self.should_close) {
         try self.drawFrame();
     }
 
@@ -1598,8 +1637,8 @@ fn drawFrame(self: *App) !void {
         }
     };
 
-    if (result == .suboptimal_khr or result == .error_out_of_date_khr or self.framebuffer_resized) {
-        self.framebuffer_resized = false;
+    if (result == .suboptimal_khr or result == .error_out_of_date_khr or self.framebuf_resized) {
+        self.framebuf_resized = false;
         try self.recreateSwapChain();
     }
 
@@ -1697,7 +1736,7 @@ fn checkValLayerSupport(self: *App) !bool {
 }
 
 fn getRequiredExtensions() ![]const [*:0]const u8 {
-    const required_extensions = libwindow.getRequiredInstanceExtensions();
+    const required_extensions = libw.getRequiredInstanceExtensions();
 
     var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(required_extensions.len + 1));
     defer extensions.deinit(allocator);

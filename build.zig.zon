@@ -52,8 +52,8 @@
             .url = "git+https://github.com/chip2n/zig-obj.git#47410383c81d24454e370ffadc0980af7abea522",
             .hash = "obj-3.0.2-v8OfitvLAADxUf6oMHCiWxjJILklY-IMKXlwX-Pv8rKu",
         },
-        .libwindow = .{
-            .path = "../ZigRenderer",
+        .glass = .{
+            .path = "../glass",
         },
     },
     .paths = .{
