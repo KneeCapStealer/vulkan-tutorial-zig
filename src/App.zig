@@ -77,7 +77,6 @@ const device_extensions: []const [*:0]const u8 = &.{
 const max_frames_in_flight = 2;
 
 window: *libw.Window,
-win_dispatch: WinDispatch,
 surface: vk.SurfaceKHR,
 
 vk_base: vk.BaseWrapper,
@@ -164,7 +163,6 @@ pub fn init() App {
 
     return App{
         .window = undefined,
-        .win_dispatch = undefined,
         .surface = .null_handle,
 
         .vk_base = undefined,
@@ -311,15 +309,12 @@ const WinDispatch = struct {
 };
 
 fn initWindow(self: *App, lw_state: *libw.State) !void {
-    self.win_dispatch = .{};
-
     self.window = try .open(
         lw_state,
         .{
             .size = .{ .width = 4 * 240, .height = 3 * 240 },
             .allow_resizing = true,
         },
-        self.win_dispatch.getDispatch(),
     );
 }
 
@@ -1577,6 +1572,20 @@ fn mainLoop(self: *App, lw_state: *libw.State) !void {
     start = std.time.milliTimestamp();
 
     while (lw_state.dispatch() == .SUCCESS and !self.should_close) {
+        while (self.window.event_queue.pop()) |event| switch (event) {
+            .close => self.should_close = true,
+            .key => |key| {
+                if (key.event == .down) switch (key.code) {
+                    .f => self.window.setFullScreen(!self.window.isFullscreen(), null),
+                    .l => self.window.setSize(.{ .width = 500, .height = 200 }),
+                    .j => self.window.setSize(.{ .width = 1000, .height = 500 }),
+                    else => {},
+                };
+            },
+            .framebuf_resize => self.framebuf_resized = true,
+            else => {},
+        };
+
         try self.drawFrame();
     }
 
