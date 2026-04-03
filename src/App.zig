@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 const builtin = @import("builtin");
 
 const img = @import("zigimg");
-const libw = @import("glass");
+const glass = @import("glass");
 const obj = @import("obj");
 const vk = @import("vulkan");
 
@@ -76,7 +76,7 @@ const device_extensions: []const [*:0]const u8 = &.{
 
 const max_frames_in_flight = 2;
 
-window: *libw.Window,
+window: *glass.Window,
 surface: vk.SurfaceKHR,
 
 vk_base: vk.BaseWrapper,
@@ -230,7 +230,7 @@ pub fn init() App {
 
 pub fn run(self: *App) !void {
     {
-        const lw_state: *libw.State = try .init(allocator);
+        const lw_state: *glass.State = try .init(allocator);
         defer lw_state.deinit();
 
         try self.initWindow(lw_state);
@@ -250,12 +250,12 @@ pub fn run(self: *App) !void {
 }
 
 const WinDispatch = struct {
-    fn resizeCallback(dispatch: *anyopaque, new_size: libw.Extent) void {
+    fn resizeCallback(dispatch: *anyopaque, new_size: glass.Extent) void {
         _ = dispatch;
         _ = new_size;
     }
 
-    fn framebufResizeCallback(dispatch: *anyopaque, new_size: libw.Extent) void {
+    fn framebufResizeCallback(dispatch: *anyopaque, new_size: glass.Extent) void {
         _ = new_size;
 
         const self: *WinDispatch = @ptrCast(@alignCast(dispatch));
@@ -294,7 +294,7 @@ const WinDispatch = struct {
         );
     }
 
-    pub fn getDispatch(self: *WinDispatch) libw.Window.Dispatch {
+    pub fn getDispatch(self: *WinDispatch) glass.Window.Dispatch {
         return .{
             .ptr = self,
             .vtable = &.{
@@ -308,7 +308,7 @@ const WinDispatch = struct {
     }
 };
 
-fn initWindow(self: *App, lw_state: *libw.State) !void {
+fn initWindow(self: *App, lw_state: *glass.State) !void {
     self.window = try .open(
         lw_state,
         .{
@@ -353,7 +353,7 @@ fn createInstance(self: *App) !void {
     self.vk_instance = .init(instance, &self.instance_wrapper);
 }
 
-fn createSurface(self: *App, lw_state: *libw.State) !void {
+fn createSurface(self: *App, lw_state: *glass.State) !void {
     const result: vk.Result = @enumFromInt(try self.window.createVulkanSurface(lw_state, @ptrFromInt(@intFromEnum(self.vk_instance.handle)), @ptrCast(&self.surface)));
     if (result != .success) {
         return error.FailedCreatingSurface;
@@ -362,8 +362,8 @@ fn createSurface(self: *App, lw_state: *libw.State) !void {
 
 const VkGetInstanceProcAddress = *const fn (vk.Instance, [*:0]const u8) callconv(vk.vulkan_call_conv) vk.PfnVoidFunction;
 
-fn initVulkan(self: *App, lw_state: *libw.State) !void {
-    const vkGetInstanceProcAddr: VkGetInstanceProcAddress = @ptrCast(try libw.getVkGetInstanceProcAddr());
+fn initVulkan(self: *App, lw_state: *glass.State) !void {
+    const vkGetInstanceProcAddr: VkGetInstanceProcAddress = @ptrCast(try glass.getVkGetInstanceProcAddr());
 
     self.vk_base = .load(vkGetInstanceProcAddr);
 
@@ -1568,7 +1568,7 @@ fn setupDebugMessenger(self: *App) !void {
     self.debug_messenger = try self.vk_instance.createDebugUtilsMessengerEXT(&create_info, null);
 }
 
-fn mainLoop(self: *App, lw_state: *libw.State) !void {
+fn mainLoop(self: *App, lw_state: *glass.State) !void {
     start = std.time.milliTimestamp();
 
     while (lw_state.dispatch() == .SUCCESS and !self.should_close) {
@@ -1745,7 +1745,7 @@ fn checkValLayerSupport(self: *App) !bool {
 }
 
 fn getRequiredExtensions() ![]const [*:0]const u8 {
-    const required_extensions = libw.getRequiredInstanceExtensions();
+    const required_extensions = glass.getRequiredInstanceExtensions();
 
     var extensions: std.ArrayList([*:0]const u8) = try .initCapacity(allocator, @intCast(required_extensions.len + 1));
     defer extensions.deinit(allocator);
