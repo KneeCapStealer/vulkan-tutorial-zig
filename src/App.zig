@@ -312,7 +312,7 @@ fn initWindow(self: *App, lw_state: *glass.State) !void {
     self.window = try .open(
         lw_state,
         .{
-            .size = .{ .width = 4 * 240, .height = 3 * 240 },
+            .size = .{ .width = 4 * 100, .height = 3 * 100 },
             .allow_resizing = true,
         },
     );
@@ -1338,6 +1338,7 @@ fn createImageViews(self: *App) !void {
 }
 
 fn recreateSwapChain(self: *App) !void {
+    std.debug.print("[Vulkan App] Recreating swapchain\n", .{});
     // If the windows size is 0 then it is minimized and we pause the app
     try self.vk_device.deviceWaitIdle();
 
@@ -1578,11 +1579,23 @@ fn mainLoop(self: *App, lw_state: *glass.State) !void {
                 if (key.event == .down) switch (key.code) {
                     .f => self.window.setFullScreen(!self.window.isFullscreen(), null),
                     .l => self.window.setSize(.{ .width = 500, .height = 200 }),
-                    .j => self.window.setSize(.{ .width = 1000, .height = 500 }),
+                    .j => {
+                        const new_size: glass.Extent = .{ .width = 1000, .height = 500 };
+                        std.debug.print("[Vulkan App] Calling setSize: {}\n", .{new_size});
+                        self.window.setSize(new_size);
+                    },
                     else => {},
                 };
             },
-            .framebuf_resize => self.framebuf_resized = true,
+            .framebuf_resize => |resize| {
+                std.debug.print(
+                    \\[Vulkan App] Resize Event recieved
+                    \\New size: {}
+                    \\Current swapchain extent: {}
+                    \\
+                , .{ resize.new_size, self.swap_chain_extent });
+                self.framebuf_resized = true;
+            },
             else => {},
         };
 
@@ -1593,6 +1606,11 @@ fn mainLoop(self: *App, lw_state: *glass.State) !void {
 }
 
 fn drawFrame(self: *App) !void {
+    if (self.framebuf_resized) {
+        self.framebuf_resized = false;
+        try self.recreateSwapChain();
+    }
+
     _ = try self.vk_device.waitForFences(1, @ptrCast(&self.in_flight_fences[self.current_frame]), .true, std.math.maxInt(u64));
 
     // 'render_finished_semaphores' give validation errors because the semaphores might still be in use when rendering.
@@ -1638,6 +1656,7 @@ fn drawFrame(self: *App) !void {
         .p_image_indices = @ptrCast(&image.image_index),
     };
 
+    std.debug.print("[Vulkan App] Before vulkan presentKHR\n", .{});
     const result = self.present_queue.presentKHR(&present_info) catch |err| blk: {
         if (err == error.OutOfDateKHR) {
             break :blk vk.Result.error_out_of_date_khr;
@@ -1645,9 +1664,9 @@ fn drawFrame(self: *App) !void {
             return err;
         }
     };
+    std.debug.print("[Vulkan App] After vulkan presentKHR\n", .{});
 
-    if (result == .suboptimal_khr or result == .error_out_of_date_khr or self.framebuf_resized) {
-        self.framebuf_resized = false;
+    if (result == .suboptimal_khr or result == .error_out_of_date_khr) {
         try self.recreateSwapChain();
     }
 
